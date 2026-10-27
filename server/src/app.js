@@ -369,8 +369,7 @@ app.post('/api/journal-entries', async (req, res) => {
     const actualVoucherNumber = voucherNumber.trim();
 
     // Journal voucher type
-    const voucherType = 'Journal';
-
+    const voucherType = 'journal';
     // Save journal header, including all required columns
     const entryResult = await client.query(
       `INSERT INTO journal_entries
