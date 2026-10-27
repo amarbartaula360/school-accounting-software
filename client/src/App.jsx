@@ -357,44 +357,98 @@ function Notice({ message, type = 'info' }) {
     </div>
   );
 }
-
 function JournalVoucher({ accounts, onVoucherSaved }) {
   const [entryDate, setEntryDate] = useState(getTodayAD());
   const [bsDate, setBsDate] = useState(toBS(getTodayAD()));
+
   const [voucherNumber, setVoucherNumber] = useState(
     `JV-${Date.now().toString().slice(-6)}`
   );
+
   const [description, setDescription] = useState('');
   const [rows, setRows] = useState([
     { accountId: '', debit: '', credit: '' },
     { accountId: '', debit: '', credit: '' }
   ]);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Database बाट saved journal entries राख्ने state
+  const [journalEntries, setJournalEntries] = useState([]);
+  const [loadingEntries, setLoadingEntries] = useState(true);
+  const [registerError, setRegisterError] = useState('');
+
   const totalDebit = rows.reduce(
-    (sum, r) => sum + (Number(r.debit) || 0), 0
+    (sum, r) => sum + (Number(r.debit) || 0),
+    0
   );
+
   const totalCredit = rows.reduce(
-    (sum, r) => sum + (Number(r.credit) || 0), 0
+    (sum, r) => sum + (Number(r.credit) || 0),
+    0
   );
 
   const validRows = rows.filter(r =>
     r.accountId &&
-    ((Number(r.debit) || 0) > 0 || (Number(r.credit) || 0) > 0)
+    (
+      (Number(r.debit) || 0) > 0 ||
+      (Number(r.credit) || 0) > 0
+    )
   );
 
-  const balanced = totalDebit > 0 &&
+  const balanced =
+    totalDebit > 0 &&
     Math.abs(totalDebit - totalCredit) < 0.005;
+
+  // Database बाट journal register load गर्ने
+  async function loadJournalEntries() {
+    setLoadingEntries(true);
+    setRegisterError('');
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/journal-entries?organizationId=${ORGANIZATION_ID}`
+      );
+
+      const data = await response.json().catch(() => []);
+
+      if (!response.ok) {
+        throw new Error(
+          data.message || 'Journal entries load गर्न सकिएन।'
+        );
+      }
+
+      if (!Array.isArray(data)) {
+        throw new Error('Journal register बाट सही data आएन।');
+      }
+
+      setJournalEntries(data);
+    } catch (e) {
+      console.error('Journal register loading error:', e);
+      setRegisterError(
+        e.message || 'Journal entries load गर्दा समस्या आयो।'
+      );
+    } finally {
+      setLoadingEntries(false);
+    }
+  }
+
+  // Page खुल्दा database बाट पुराना entries load गर्ने
+  useEffect(() => {
+    loadJournalEntries();
+  }, []);
 
   function changeDate(value) {
     setBsDate(value);
     setError('');
     setSuccess('');
 
-    // Use the library's BS-to-AD conversion, if available.
-    const match = value.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    const match = value.trim().match(
+      /^(\d{4})-(\d{1,2})-(\d{1,2})$/
+    );
+
     if (!match) {
       setError('मिति YYYY-MM-DD ढाँचामा लेख्नुहोस्।');
       return;
@@ -404,34 +458,49 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
       const year = Number(match[1]);
       const month = Number(match[2]) - 1;
       const day = Number(match[3]);
+
       const bs = new NepaliDate(year, month, day);
       const jsDate = bs.toJsDate();
 
-      if (!(jsDate instanceof Date) || Number.isNaN(jsDate.getTime())) {
+      if (
+        !(jsDate instanceof Date) ||
+        Number.isNaN(jsDate.getTime())
+      ) {
         throw new Error('मिति परिवर्तन भएन।');
       }
 
       setEntryDate(
-        `${jsDate.getFullYear()}-${String(jsDate.getMonth() + 1).padStart(2, '0')}-${String(jsDate.getDate()).padStart(2, '0')}`
+        `${jsDate.getFullYear()}-${String(
+          jsDate.getMonth() + 1
+        ).padStart(2, '0')}-${String(
+          jsDate.getDate()
+        ).padStart(2, '0')}`
       );
     } catch (e) {
       setError(
-        'यो मिति convert हुन सकेन। आफ्नो nepali-date-converter version जाँच्नुहोस्।'
+        'यो मिति convert हुन सकेन। मिति र converter version जाँच्नुहोस्।'
       );
     }
   }
 
   function updateRow(index, field, value) {
-    setRows(current => current.map((row, i) => {
-      if (i !== index) return row;
-      const updated = { ...row, [field]: value };
+    setRows(current =>
+      current.map((row, i) => {
+        if (i !== index) return row;
 
-      // One line should not be both debit and credit.
-      if (field === 'debit' && Number(value) > 0) updated.credit = '';
-      if (field === 'credit' && Number(value) > 0) updated.debit = '';
+        const updated = { ...row, [field]: value };
 
-      return updated;
-    }));
+        if (field === 'debit' && Number(value) > 0) {
+          updated.credit = '';
+        }
+
+        if (field === 'credit' && Number(value) > 0) {
+          updated.debit = '';
+        }
+
+        return updated;
+      })
+    );
   }
 
   function addRow() {
@@ -450,6 +519,11 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
     setError('');
     setSuccess('');
 
+    if (!voucherNumber.trim()) {
+      setError('Voucher Number भर्नुहोस्।');
+      return;
+    }
+
     if (!description.trim()) {
       setError('विवरण / Narration भर्नुहोस्।');
       return;
@@ -460,10 +534,16 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
       return;
     }
 
-    if (validRows.some(r =>
-      Number(r.debit || 0) > 0 && Number(r.credit || 0) > 0
-    )) {
-      setError('एउटै row मा Debit र Credit दुवै राख्न मिल्दैन।');
+    if (
+      validRows.some(
+        r =>
+          Number(r.debit || 0) > 0 &&
+          Number(r.credit || 0) > 0
+      )
+    ) {
+      setError(
+        'एउटै row मा Debit र Credit दुवै राख्न मिल्दैन।'
+      );
       return;
     }
 
@@ -472,7 +552,11 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
       return;
     }
 
-    if (validRows.some(r => !accounts.some(a => a.id === Number(r.accountId)))) {
+    if (
+      validRows.some(
+        r => !accounts.some(a => a.id === Number(r.accountId))
+      )
+    ) {
       setError('कुनै account भेटिएन। Accounts पुनः load गर्नुहोस्।');
       return;
     }
@@ -480,33 +564,44 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
     setSaving(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/journal-entries`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-  organizationId: ORGANIZATION_ID,
-  financialYearId: FINANCIAL_YEAR_ID,
-  entryDate,
-  voucherNumber,
-  description: description.trim(),
-  lines: validRows.map(r => ({
-    accountId: Number(r.accountId),
-    debit: Number(r.debit) || 0,
-    credit: Number(r.credit) || 0
-  }))
-})  }))
+      const response = await fetch(
+        `${API_BASE_URL}/api/journal-entries`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            organizationId: ORGANIZATION_ID,
+            financialYearId: FINANCIAL_YEAR_ID,
+            entryDate,
+            voucherNumber: voucherNumber.trim(),
+            description: description.trim(),
+            lines: validRows.map(r => ({
+              accountId: Number(r.accountId),
+              debit: Number(r.debit) || 0,
+              credit: Number(r.credit) || 0
+            }))
+          })
+        }
+      );
+
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
-          data.error || data.message ||
+          data.message ||
+          data.error ||
           `Voucher save भएन (HTTP ${response.status})`
         );
       }
 
+      // Save सफल भएपछि database बाट register फेरि load गर्ने
+      await loadJournalEntries();
+
       onVoucherSaved?.({
         date: entryDate,
-        ref: voucherNumber,
+        ref: voucherNumber.trim(),
         description: description.trim(),
         category: 'Journal Voucher',
         method: 'Journal',
@@ -514,16 +609,24 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
         positive: true
       });
 
-      setSuccess('Journal Voucher backend मा पठाइयो।');
-      setVoucherNumber(`JV-${Date.now().toString().slice(-6)}`);
+      setSuccess(
+        'Journal Voucher database मा सुरक्षित भयो।'
+      );
+
+      setVoucherNumber(
+        `JV-${Date.now().toString().slice(-6)}`
+      );
+
       setDescription('');
       setRows([
         { accountId: '', debit: '', credit: '' },
         { accountId: '', debit: '', credit: '' }
       ]);
     } catch (e) {
+      console.error('Journal voucher save error:', e);
+
       setError(
-        `${e.message}. Backend ले lines format स्वीकार गर्छ कि गर्दैन जाँच्नुहोस्।`
+        e.message || 'Journal Voucher save गर्दा समस्या आयो।'
       );
     } finally {
       setSaving(false);
@@ -534,12 +637,17 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
     <div>
       <div style={styles.pageHeading}>
         <div>
-          <div style={styles.eyebrow}>लेखा व्यवस्थापन / Accounting</div>
+          <div style={styles.eyebrow}>
+            लेखा व्यवस्थापन / Accounting
+          </div>
           <h1 style={styles.h1}>Journal Voucher</h1>
-          <p>एउटै भौचरमा धेरै Debit र Credit entries राख्नुहोस्।</p>
+          <p>
+            एउटै भौचरमा धेरै Debit र Credit entries राख्नुहोस्।
+          </p>
         </div>
       </div>
 
+      {/* Journal Voucher Form */}
       <section style={styles.panel}>
         <form onSubmit={saveVoucher}>
           <div style={styles.formGrid}>
@@ -549,6 +657,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                 style={styles.input}
                 value={voucherNumber}
                 onChange={e => setVoucherNumber(e.target.value)}
+                maxLength={50}
                 required
               />
             </label>
@@ -567,9 +676,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                   required
                 />
               </div>
-              <small>
-                AD date: {entryDate}
-              </small>
+              <small>AD date: {entryDate}</small>
             </label>
           </div>
 
@@ -587,8 +694,11 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
           <div style={styles.panelHeading}>
             <div>
               <h2>Entry Details / कारोबार विवरण</h2>
-              <p>हरेक account row मा Debit वा Credit मध्ये एउटा मात्र राख्नुहोस्।</p>
+              <p>
+                हरेक account row मा Debit वा Credit मध्ये एउटा मात्र राख्नुहोस्।
+              </p>
             </div>
+
             <button
               type="button"
               style={styles.secondaryButton}
@@ -609,19 +719,26 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                   <th>Action</th>
                 </tr>
               </thead>
+
               <tbody>
                 {rows.map((row, index) => (
                   <tr key={index}>
                     <td>{index + 1}</td>
+
                     <td>
                       <select
                         style={styles.input}
                         value={row.accountId}
                         onChange={e =>
-                          updateRow(index, 'accountId', e.target.value)
+                          updateRow(
+                            index,
+                            'accountId',
+                            e.target.value
+                          )
                         }
                       >
                         <option value="">खाता छान्नुहोस्</option>
+
                         {accounts.map(a => (
                           <option key={a.id} value={a.id}>
                             {a.code} - {a.name}
@@ -629,6 +746,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                         ))}
                       </select>
                     </td>
+
                     <td>
                       <input
                         style={styles.input}
@@ -642,6 +760,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                         placeholder="0.00"
                       />
                     </td>
+
                     <td>
                       <input
                         style={styles.input}
@@ -655,6 +774,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                         placeholder="0.00"
                       />
                     </td>
+
                     <td>
                       <button
                         type="button"
@@ -668,6 +788,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                   </tr>
                 ))}
               </tbody>
+
               <tfoot>
                 <tr>
                   <th colSpan="2">Total / जम्मा</th>
@@ -679,14 +800,17 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
             </table>
           </div>
 
-          <div style={{
-            ...styles.balanceStatus,
-            color: balanced ? '#047857' : '#b45309',
-            background: balanced ? '#ecfdf5' : '#fffbeb'
-          }}>
+          <div
+            style={{
+              ...styles.balanceStatus,
+              color: balanced ? '#047857' : '#b45309',
+              background: balanced ? '#ecfdf5' : '#fffbeb'
+            }}
+          >
             {balanced
               ? <CheckCircle2 size={18} />
               : <AlertCircle size={18} />}
+
             {balanced
               ? 'Balanced: Debit = Credit'
               : 'Not Balanced: Debit र Credit बराबर हुनुपर्छ।'}
@@ -700,9 +824,110 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
             style={styles.primaryButton}
             disabled={saving || !balanced}
           >
-            {saving ? 'Saving...' : 'Save Voucher / भौचर सुरक्षित गर्नुहोस्'}
+            {saving
+              ? 'Saving...'
+              : 'Save Voucher / भौचर सुरक्षित गर्नुहोस्'}
           </button>
         </form>
+      </section>
+
+      {/* Saved Journal Vouchers from database */}
+      <section style={styles.panel}>
+        <div style={styles.panelHeading}>
+          <div>
+            <h2>Saved Journal Vouchers / सुरक्षित भौचरहरू</h2>
+            <p>
+              Database मा सुरक्षित भएका भौचरहरूको सूची।
+            </p>
+          </div>
+
+          <button
+            type="button"
+            style={styles.secondaryButton}
+            onClick={loadJournalEntries}
+            disabled={loadingEntries}
+          >
+            <RefreshCw size={16} />
+            {loadingEntries ? 'Loading...' : 'Reload'}
+          </button>
+        </div>
+
+        {loadingEntries && (
+          <Notice message="Saved journal entries load हुँदैछन्..." />
+        )}
+
+        {registerError && (
+          <Notice type="error" message={registerError} />
+        )}
+
+        {!loadingEntries && !registerError && (
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Voucher No.</th>
+                  <th>Voucher Type</th>
+                  <th>Description</th>
+                  <th>Debit</th>
+                  <th>Credit</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {journalEntries.map(entry => (
+                  <tr key={entry.id}>
+                    <td>
+                      {String(entry.entry_date || '').slice(0, 10)}
+                    </td>
+                    <td>{entry.voucher_number}</td>
+                    <td>{entry.voucher_type}</td>
+                    <td>{entry.description}</td>
+                    <td>{money(Number(entry.total_debit) || 0)}</td>
+                    <td>{money(Number(entry.total_credit) || 0)}</td>
+                    <td>{entry.status}</td>
+                  </tr>
+                ))}
+
+                {journalEntries.length === 0 && (
+                  <tr>
+                    <td colSpan="7" style={styles.emptyCell}>
+                      अहिलेसम्म कुनै Journal Voucher भेटिएन।
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+
+              {journalEntries.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <th colSpan="4">Total / जम्मा</th>
+                    <th>
+                      {money(
+                        journalEntries.reduce(
+                          (sum, entry) =>
+                            sum + (Number(entry.total_debit) || 0),
+                          0
+                        )
+                      )}
+                    </th>
+                    <th>
+                      {money(
+                        journalEntries.reduce(
+                          (sum, entry) =>
+                            sum + (Number(entry.total_credit) || 0),
+                          0
+                        )
+                      )}
+                    </th>
+                    <th></th>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );
