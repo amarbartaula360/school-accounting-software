@@ -10,9 +10,13 @@ const port = process.env.PORT || 4000;
 
 // Allow local frontend ports and the configured production frontend
 const allowedOrigins = [
+
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
+  'https://school-accounting-frontend.onrender.com',
+  'https://amarbartaula.com.np',
+  'https://www.amarbartaula.com.np',
   process.env.CLIENT_ORIGIN
 ].filter(Boolean);
 
