@@ -598,11 +598,11 @@ app.get('/api/fee/students', async (req, res) => {
       return res.status(400).json({ message: 'Valid organizationId is required' });
     }
     const result = await pool.query(
-      `SELECT id, organization_id, admission_no, student_name, class_name, section,
-              roll_number, guardian_name, guardian_phone, is_active, created_at
+      `SELECT id, organization_id, reg_no, admission_no, student_name, class_name, section,
+              roll_number, dob_bs, gender, address, photo_url, guardian_name, guardian_phone, is_active, created_at
        FROM public.fee_students
        WHERE organization_id = $1
-         AND ($2::text = '' OR admission_no ILIKE '%' || $2 || '%'
+         AND ($2::text = '' OR COALESCE(NULLIF(reg_no, ''), admission_no) ILIKE '%' || $2 || '%'
               OR student_name ILIKE '%' || $2 || '%'
               OR class_name ILIKE '%' || $2 || '%'
               OR section ILIKE '%' || $2 || '%'
@@ -616,6 +616,9 @@ app.get('/api/fee/students', async (req, res) => {
     if (err.code === '42P01') {
       return res.status(500).json({ message: 'Student Fee tables are not installed. Run student_fee_module_migration.sql in DBeaver.' });
     }
+    if (err.code === '42703') {
+      return res.status(500).json({ message: 'fee_students मा reg_no column छैन। Updated student_fee_module_migration.sql चलाउनुहोस्।' });
+    }
     return res.status(500).json({ message: 'Could not load students' });
   }
 });
@@ -623,41 +626,260 @@ app.get('/api/fee/students', async (req, res) => {
 app.post('/api/fee/students', async (req, res) => {
   try {
     const {
-      organizationId, admissionNo, studentName, className, section,
-      rollNumber, guardianName = '', guardianPhone = ''
+      organizationId, regNo, admissionNo, studentName, className, section,
+      rollNumber, guardianName = '', guardianPhone = '', dobBs = '', gender = '', address = '', photoUrl = ''
     } = req.body;
+    const normalizedRegNo = String(regNo ?? admissionNo ?? '').trim();
     if (
       !isValidOrganizationId(organizationId) ||
-      typeof admissionNo !== 'string' || !admissionNo.trim() ||
+      !normalizedRegNo ||
       typeof studentName !== 'string' || !studentName.trim() ||
       typeof className !== 'string' || !className.trim() ||
       typeof section !== 'string' || !section.trim() ||
       (typeof rollNumber !== 'string' && typeof rollNumber !== 'number') ||
       !String(rollNumber).trim()
     ) {
-      return res.status(400).json({ message: 'Admission no, student name, class, section and roll number are required.' });
+      return res.status(400).json({ message: 'Reg No, student name, class, section and roll number are required.' });
     }
     const result = await pool.query(
       `INSERT INTO public.fee_students
-         (organization_id, admission_no, student_name, class_name, section,
-          roll_number, guardian_name, guardian_phone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (organization_id, reg_no, admission_no, student_name, class_name, section,
+          roll_number, guardian_name, guardian_phone, dob_bs, gender, address, photo_url)
+       VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
-      [Number(organizationId), admissionNo.trim(), studentName.trim(), className.trim(),
+      [Number(organizationId), normalizedRegNo, studentName.trim(), className.trim(),
        section.trim(), String(rollNumber).trim(), String(guardianName || '').trim() || null,
-       String(guardianPhone || '').trim() || null]
+       String(guardianPhone || '').trim() || null, String(dobBs || '').trim() || null,
+       String(gender || '').trim().toLowerCase() || null, String(address || '').trim() || null,
+       String(photoUrl || '').trim() || null]
     );
     return res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') {
-      return res.status(409).json({ message: 'यो Admission No वा Class/Section/Roll No पहिले नै दर्ता छ।' });
+      return res.status(409).json({ message: 'यो Reg No वा Class/Section/Roll No पहिले नै दर्ता छ।' });
     }
     if (err.code === '42P01') {
       return res.status(500).json({ message: 'Student Fee tables are not installed. Run student_fee_module_migration.sql in DBeaver.' });
     }
+    if (err.code === '42703') {
+      return res.status(500).json({ message: 'fee_students मा reg_no column छैन। Updated student_fee_module_migration.sql चलाउनुहोस्।' });
+    }
     console.error('Create fee student error:', err.message);
     return res.status(500).json({ message: 'Could not save student' });
   }
+});
+
+// Bulk Excel import: valid rows are saved, duplicate/invalid rows are skipped with row-level feedback.
+app.post('/api/fee/students/import', async (req, res) => {
+  const { organizationId, students } = req.body || {};
+  if (!isValidOrganizationId(organizationId)) {
+    return res.status(400).json({ message: 'Valid organizationId is required' });
+  }
+  if (!Array.isArray(students) || students.length === 0) {
+    return res.status(400).json({ message: 'Import गर्न कम्तीमा एउटा विद्यार्थी record आवश्यक छ।' });
+  }
+  if (students.length > 1000) {
+    return res.status(413).json({ message: 'एकपटकमा बढीमा 1,000 विद्यार्थी मात्र import गर्न सकिन्छ।' });
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    let imported = 0;
+    let skipped = 0;
+    const errors = [];
+
+    for (let index = 0; index < students.length; index += 1) {
+      const row = students[index] || {};
+      const rowNumber = Number(row.rowNumber) || (index + 2);
+      const regNo = String(row.regNo ?? row.reg_no ?? row.admissionNo ?? row.admission_no ?? '').trim();
+      const studentName = String(row.studentName ?? row.student_name ?? row.name ?? '').trim();
+      const className = String(row.className ?? row.class_name ?? row.class ?? '').trim();
+      const section = String(row.section ?? '').trim();
+      const rollNumber = String(row.rollNumber ?? row.roll_number ?? row.rollNo ?? '').trim();
+      const guardianName = String(row.guardianName ?? row.guardian_name ?? row.parentName ?? '').trim();
+      const guardianPhone = String(row.guardianPhone ?? row.guardian_phone ?? row.parentPhone ?? '').trim();
+      const dobBs = String(row.dobBs ?? row.dob_bs ?? row.dob ?? '').trim();
+      const gender = String(row.gender ?? '').trim().toLowerCase();
+      const address = String(row.address ?? '').trim();
+      const photoUrl = String(row.photoUrl ?? row.photo_url ?? '').trim();
+
+      const missing = [];
+      if (!regNo) missing.push('Reg No');
+      if (!studentName) missing.push('Student Name');
+      if (!className) missing.push('Class');
+      if (!section) missing.push('Section');
+      if (!rollNumber) missing.push('Roll Number');
+      if (missing.length) {
+        skipped += 1;
+        errors.push({ rowNumber, regNo, message: `आवश्यक विवरण छैन: ${missing.join(', ')}` });
+        continue;
+      }
+
+      const result = await client.query(
+        `INSERT INTO public.fee_students
+           (organization_id, reg_no, admission_no, student_name, class_name, section,
+            roll_number, guardian_name, guardian_phone, dob_bs, gender, address, photo_url)
+         VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT DO NOTHING
+         RETURNING id, reg_no, student_name`,
+        [Number(organizationId), regNo, studentName, className, section, rollNumber,
+         guardianName || null, guardianPhone || null, dobBs || null, gender || null, address || null, photoUrl || null]
+      );
+      if (result.rowCount) {
+        imported += 1;
+      } else {
+        skipped += 1;
+        errors.push({ rowNumber, regNo, message: 'Duplicate Reg No वा Class/Section/Roll No भएकाले skip गरियो।' });
+      }
+    }
+
+    await client.query('COMMIT');
+    return res.status(201).json({ total: students.length, imported, skipped, errors });
+  } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch { /* preserve original error */ }
+    }
+    console.error('Bulk student import error:', err.message);
+    if (err.code === '42P01') {
+      return res.status(500).json({ message: 'Student Fee tables छैनन्। student_fee_module_migration.sql चलाउनुहोस्।' });
+    }
+    if (err.code === '42703') {
+      return res.status(500).json({ message: 'fee_students मा reg_no column छैन। Updated student_fee_module_migration.sql चलाउनुहोस्।' });
+    }
+    return res.status(500).json({ message: 'Excel विद्यार्थी import असफल भयो; कुनै partial import save गरिएको छैन।' });
+  } finally {
+    client?.release();
+  }
+});
+
+// Student profile APIs for demographics, transport, attendance, discipline and teacher remarks.
+app.get('/api/fee/students/:studentId/profile', async (req, res) => {
+  try {
+    const { organizationId } = req.query;
+    const studentId = Number(req.params.studentId);
+    if (!isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId)) return res.status(400).json({ message: 'Valid organizationId and studentId are required.' });
+    const studentResult = await pool.query(
+      `SELECT id, organization_id, reg_no, admission_no, student_name, class_name, section, roll_number,
+              dob_bs, gender, address, photo_url, guardian_name, guardian_phone, is_active, created_at
+       FROM public.fee_students WHERE id = $1 AND organization_id = $2`,
+      [studentId, Number(organizationId)]
+    );
+    if (!studentResult.rowCount) return res.status(404).json({ message: 'Student not found.' });
+    const [transportResult, attendanceSummaryResult, attendanceRecentResult, disciplineResult, remarksResult] = await Promise.all([
+      pool.query('SELECT * FROM public.fee_student_transport WHERE organization_id = $1 AND student_id = $2', [Number(organizationId), studentId]),
+      pool.query(`SELECT COUNT(*)::int AS total_marked,
+        COUNT(*) FILTER (WHERE status = 'present')::int AS present_days,
+        COUNT(*) FILTER (WHERE status = 'absent')::int AS absent_days,
+        COUNT(*) FILTER (WHERE status = 'late')::int AS late_days,
+        COUNT(*) FILTER (WHERE status = 'leave')::int AS leave_days,
+        COALESCE(ROUND(100.0 * COUNT(*) FILTER (WHERE status IN ('present','late')) / NULLIF(COUNT(*),0), 1), 0)::numeric AS attendance_percent
+        FROM public.fee_student_attendance WHERE organization_id = $1 AND student_id = $2`, [Number(organizationId), studentId]),
+      pool.query('SELECT id, attendance_date, status FROM public.fee_student_attendance WHERE organization_id = $1 AND student_id = $2 ORDER BY attendance_date DESC, id DESC LIMIT 20', [Number(organizationId), studentId]),
+      pool.query('SELECT id, incident_date, category, title, description, action_report, created_at FROM public.fee_student_discipline_logs WHERE organization_id = $1 AND student_id = $2 ORDER BY incident_date DESC, id DESC LIMIT 200', [Number(organizationId), studentId]),
+      pool.query('SELECT id, remark_date, terminal_remarks, academic_feedback, parent_communication, created_at FROM public.fee_student_teacher_remarks WHERE organization_id = $1 AND student_id = $2 ORDER BY remark_date DESC, id DESC LIMIT 200', [Number(organizationId), studentId])
+    ]);
+    return res.json({ student: studentResult.rows[0], transport: transportResult.rows[0] || null,
+      attendanceSummary: attendanceSummaryResult.rows[0], attendanceRecent: attendanceRecentResult.rows,
+      disciplineLogs: disciplineResult.rows, teacherRemarks: remarksResult.rows });
+  } catch (err) {
+    console.error('Student profile load error:', err.message);
+    if (err.code === '42P01') return res.status(500).json({ message: 'Profile support tables छैनन्। Updated student_fee_module_migration.sql चलाउनुहोस्।' });
+    if (err.code === '42703') return res.status(500).json({ message: 'Student profile columns छैनन्। Updated student_fee_module_migration.sql चलाउनुहोस्।' });
+    return res.status(500).json({ message: 'Could not load student profile.' });
+  }
+});
+
+app.patch('/api/fee/students/:studentId/profile', async (req, res) => {
+  try {
+    const { organizationId, studentName, className, section, rollNumber, guardianName, guardianPhone, dobBs, gender, address, photoUrl } = req.body || {};
+    const studentId = Number(req.params.studentId);
+    if (!isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId) || !String(studentName || '').trim() || !String(className || '').trim() || !String(section || '').trim() || !String(rollNumber || '').trim()) return res.status(400).json({ message: 'Student name, class, section and roll number are required.' });
+    if (gender && !['male','female','other'].includes(String(gender).toLowerCase())) return res.status(400).json({ message: 'Gender male, female or other हुनुपर्छ।' });
+    const result = await pool.query(
+      `UPDATE public.fee_students SET student_name=$1, class_name=$2, section=$3, roll_number=$4,
+       guardian_name=$5, guardian_phone=$6, dob_bs=$7, gender=$8, address=$9, photo_url=$10
+       WHERE id=$11 AND organization_id=$12
+       RETURNING id, reg_no, admission_no, student_name, class_name, section, roll_number, dob_bs, gender, address, photo_url, guardian_name, guardian_phone, is_active, created_at`,
+      [String(studentName).trim(), String(className).trim(), String(section).trim(), String(rollNumber).trim(),
+       String(guardianName || '').trim() || null, String(guardianPhone || '').trim() || null,
+       String(dobBs || '').trim() || null, String(gender || '').trim().toLowerCase() || null,
+       String(address || '').trim() || null, String(photoUrl || '').trim() || null, studentId, Number(organizationId)]
+    );
+    if (!result.rowCount) return res.status(404).json({ message: 'Student not found.' });
+    return res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ message: 'यो Class/Section/Roll Number अर्को विद्यार्थीले प्रयोग गरिरहेको छ।' });
+    console.error('Student profile update error:', err.message);
+    return res.status(500).json({ message: 'Could not update student profile.' });
+  }
+});
+
+app.put('/api/fee/students/:studentId/transport', async (req, res) => {
+  try {
+    const { organizationId, busRouteNo = '', stopName = '', driverContact = '', pickupTime = '', dropTime = '', busFee = 0 } = req.body || {};
+    const studentId = Number(req.params.studentId), amount = Number(busFee || 0);
+    if (!isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId) || !Number.isFinite(amount) || amount < 0 || !validMoney(amount)) return res.status(400).json({ message: 'Valid student, organization and bus fee required.' });
+    const student = await pool.query('SELECT id FROM public.fee_students WHERE id=$1 AND organization_id=$2', [studentId, Number(organizationId)]);
+    if (!student.rowCount) return res.status(404).json({ message: 'Student not found.' });
+    const result = await pool.query(
+      `INSERT INTO public.fee_student_transport (organization_id, student_id, bus_route_no, stop_name, driver_contact, pickup_time, drop_time, bus_fee, updated_at)
+       VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::time,NULLIF($7,'')::time,$8,NOW())
+       ON CONFLICT (organization_id, student_id) DO UPDATE SET bus_route_no=EXCLUDED.bus_route_no, stop_name=EXCLUDED.stop_name,
+       driver_contact=EXCLUDED.driver_contact, pickup_time=EXCLUDED.pickup_time, drop_time=EXCLUDED.drop_time, bus_fee=EXCLUDED.bus_fee, updated_at=NOW()
+       RETURNING *`,
+      [Number(organizationId), studentId, String(busRouteNo).trim() || null, String(stopName).trim() || null, String(driverContact).trim() || null, String(pickupTime).trim(), String(dropTime).trim(), amount]
+    );
+    return res.json(result.rows[0]);
+  } catch (err) { console.error('Transport save error:', err.message); return res.status(500).json({ message: 'Could not save transport info.' }); }
+});
+
+app.post('/api/fee/students/:studentId/discipline', async (req, res) => {
+  try {
+    const { organizationId, incidentDate, category = 'negative', title, description = '', actionReport = '' } = req.body || {};
+    const studentId = Number(req.params.studentId);
+    if (!isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId) || !isValidDate(incidentDate) || !incidentDate || !['positive','negative'].includes(category) || !String(title || '').trim()) return res.status(400).json({ message: 'Valid date, title and positive/negative category required.' });
+    const result = await pool.query(
+      `INSERT INTO public.fee_student_discipline_logs (organization_id, student_id, incident_date, category, title, description, action_report)
+       SELECT $1, s.id, $3::date, $4, $5, NULLIF(BTRIM($6), ''), NULLIF(BTRIM($7), '') FROM public.fee_students s WHERE s.id=$2 AND s.organization_id=$1 RETURNING *`,
+      [Number(organizationId), studentId, incidentDate, category, String(title).trim(), String(description), String(actionReport)]
+    );
+    if (!result.rowCount) return res.status(404).json({ message: 'Student not found.' });
+    return res.status(201).json(result.rows[0]);
+  } catch (err) { console.error('Discipline log save error:', err.message); return res.status(500).json({ message: 'Could not save discipline log.' }); }
+});
+
+app.post('/api/fee/students/:studentId/remarks', async (req, res) => {
+  try {
+    const { organizationId, remarkDate, terminalRemarks = '', academicFeedback = '', parentCommunication = '' } = req.body || {};
+    const studentId = Number(req.params.studentId);
+    const values = [String(terminalRemarks).trim(), String(academicFeedback).trim(), String(parentCommunication).trim()];
+    if (!isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId) || !isValidDate(remarkDate) || !remarkDate || !values.some(Boolean)) return res.status(400).json({ message: 'मिति र कम्तीमा एउटा remark/feedback/parent communication आवश्यक छ।' });
+    const result = await pool.query(
+      `INSERT INTO public.fee_student_teacher_remarks (organization_id, student_id, remark_date, terminal_remarks, academic_feedback, parent_communication)
+       SELECT $1, s.id, $3::date, NULLIF($4,''), NULLIF($5,''), NULLIF($6,'') FROM public.fee_students s WHERE s.id=$2 AND s.organization_id=$1 RETURNING *`,
+      [Number(organizationId), studentId, remarkDate, ...values]
+    );
+    if (!result.rowCount) return res.status(404).json({ message: 'Student not found.' });
+    return res.status(201).json(result.rows[0]);
+  } catch (err) { console.error('Teacher remark save error:', err.message); return res.status(500).json({ message: 'Could not save teacher remark.' }); }
+});
+
+app.post('/api/fee/students/:studentId/attendance', async (req, res) => {
+  try {
+    const { organizationId, attendanceDate, status } = req.body || {};
+    const studentId = Number(req.params.studentId);
+    if (!isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId) || !isValidDate(attendanceDate) || !attendanceDate || !['present','absent','late','leave'].includes(status)) return res.status(400).json({ message: 'Valid attendance date and status required.' });
+    const result = await pool.query(
+      `INSERT INTO public.fee_student_attendance (organization_id, student_id, attendance_date, status)
+       SELECT $1, s.id, $3::date, $4 FROM public.fee_students s WHERE s.id=$2 AND s.organization_id=$1
+       ON CONFLICT (organization_id, student_id, attendance_date) DO UPDATE SET status=EXCLUDED.status, updated_at=NOW() RETURNING *`,
+      [Number(organizationId), studentId, attendanceDate, status]
+    );
+    if (!result.rowCount) return res.status(404).json({ message: 'Student not found.' });
+    return res.status(201).json(result.rows[0]);
+  } catch (err) { console.error('Attendance save error:', err.message); return res.status(500).json({ message: 'Could not save student attendance.' }); }
 });
 
 app.get('/api/fee/titles', async (req, res) => {
@@ -749,7 +971,7 @@ app.get('/api/fee/bills', async (req, res) => {
        )
        SELECT b.id, b.organization_id, b.student_id, b.bill_number, b.fee_month,
               b.bill_date, b.due_date, b.total_amount, b.status, b.created_at,
-              s.admission_no, s.student_name, s.class_name, s.section, s.roll_number,
+              s.reg_no, s.admission_no, s.student_name, s.class_name, s.section, s.roll_number,
               COALESCE(r.total_received, 0)::numeric(14,2) AS total_received,
               GREATEST(b.total_amount - COALESCE(r.total_received, 0), 0)::numeric(14,2) AS balance_due
        FROM public.fee_bills b
@@ -916,7 +1138,7 @@ app.post('/api/fee/receipts', async (req, res) => {
     await client.query('SELECT pg_advisory_xact_lock($1::int, 4)', [Number(organizationId)]);
 
     const billResult = await client.query(
-      `SELECT b.*, s.admission_no, s.student_name, s.class_name, s.section, s.roll_number
+      `SELECT b.*, s.reg_no, s.admission_no, s.student_name, s.class_name, s.section, s.roll_number
        FROM public.fee_bills b
        INNER JOIN public.fee_students s ON s.id = b.student_id
        WHERE b.id = $1 AND b.organization_id = $2 AND s.organization_id = $2
@@ -1028,7 +1250,7 @@ app.post('/api/fee/receipts', async (req, res) => {
       return res.status(500).json({ message: 'Receipt accounting total does not balance. Nothing was saved.' });
     }
 
-    const description = `Student fee receipt ${receiptNumber} - ${bill.student_name} (${bill.admission_no})`;
+    const description = `Student fee receipt ${receiptNumber} - ${bill.student_name} (${bill.reg_no || bill.admission_no})`;
     const entryResult = await client.query(
       `INSERT INTO public.journal_entries
          (organization_id, financial_year_id, entry_date, voucher_number, voucher_type, description, status)
@@ -1077,6 +1299,7 @@ app.post('/api/fee/receipts', async (req, res) => {
         journal_entry_id: entry.id,
         voucher_number: entry.voucher_number,
         student_name: bill.student_name,
+        reg_no: bill.reg_no || bill.admission_no,
         admission_no: bill.admission_no,
         class_name: bill.class_name,
         section: bill.section,
@@ -1118,7 +1341,7 @@ app.get('/api/fee/receipts', async (req, res) => {
               r.receipt_date, r.payment_method, r.payment_account_id,
               pa.name AS payment_account_name, r.total_amount, r.journal_entry_id,
               r.notes, r.created_at, b.bill_number,
-              s.admission_no, s.student_name, s.class_name, s.section, s.roll_number
+              s.reg_no, s.admission_no, s.student_name, s.class_name, s.section, s.roll_number
        FROM public.fee_receipts r
        INNER JOIN public.fee_students s ON s.id = r.student_id
        INNER JOIN public.fee_bills b ON b.id = r.bill_id
@@ -1142,7 +1365,7 @@ app.get('/api/fee/student-ledger', async (req, res) => {
       return res.status(400).json({ message: 'Valid organizationId and studentId are required' });
     }
     const studentResult = await pool.query(
-      `SELECT id, admission_no, student_name, class_name, section, roll_number, guardian_name, guardian_phone
+      `SELECT id, reg_no, admission_no, student_name, class_name, section, roll_number, guardian_name, guardian_phone
        FROM public.fee_students WHERE id = $1 AND organization_id = $2`,
       [Number(studentId), Number(organizationId)]
     );

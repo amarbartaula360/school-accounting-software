@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import NepaliDate from 'nepali-date-converter';
+import * as XLSX from 'xlsx';
 import {
   LayoutDashboard, BookOpen, ReceiptText, GraduationCap, Utensils,
   Package, Users, Landmark, ChartNoAxesCombined, Settings, Search,
@@ -1661,7 +1662,7 @@ function printStudentReceipt(receipt) {
     <div class="top"><h1>United English Boarding School</h1><div>Student Fee Receipt / विद्यार्थी शुल्क रसिद</div></div>
     <div class="row"><span><b>Receipt No:</b> ${escapeHtml(receipt.receipt_number)}</span><span><b>Date (BS):</b> ${escapeHtml(dateBS)}</span></div>
     <div class="row"><span><b>Date (AD):</b> ${escapeHtml(dateAD)}</span><span><b>Bill No:</b> ${escapeHtml(receipt.bill_number)}</span></div>
-    <div class="row"><span><b>Student:</b> ${escapeHtml(receipt.student_name)}</span><span><b>Admission No:</b> ${escapeHtml(receipt.admission_no)}</span></div>
+    <div class="row"><span><b>Student:</b> ${escapeHtml(receipt.student_name)}</span><span><b>Reg No:</b> ${escapeHtml(receipt.reg_no || receipt.admission_no)}</span></div>
     <div class="row"><span><b>Class/Section:</b> ${escapeHtml(receipt.class_name)} / ${escapeHtml(receipt.section)}</span><span><b>Roll No:</b> ${escapeHtml(receipt.roll_number)}</span></div>
     <table><thead><tr><th>Payment Details</th><th>Mode</th><th>Paid To</th><th class="amount">Amount</th></tr></thead>
     <tbody><tr><td>Student fee collection</td><td>${escapeHtml(String(receipt.payment_method || '').toUpperCase())}</td><td>${escapeHtml(receipt.payment_account_name)}</td><td class="amount">${money(receipt.total_amount)}</td></tr></tbody></table>
@@ -1686,7 +1687,7 @@ function StudentFees({ accounts, onRefreshAccounts }) {
   const [success, setSuccess] = useState('');
   const [lastReceipt, setLastReceipt] = useState(null);
 
-  const [admissionNo, setAdmissionNo] = useState('');
+  const [regNo, setRegNo] = useState('');
   const [studentName, setStudentName] = useState('');
   const [className, setClassName] = useState('');
   const [section, setSection] = useState('A');
@@ -1716,6 +1717,23 @@ function StudentFees({ accounts, onRefreshAccounts }) {
 
   const [ledgerStudentId, setLedgerStudentId] = useState('');
   const [studentSearch, setStudentSearch] = useState('');
+  const [studentImportRows, setStudentImportRows] = useState([]);
+  const [studentImportFileName, setStudentImportFileName] = useState('');
+  const [studentImportError, setStudentImportError] = useState('');
+  const [studentImportSummary, setStudentImportSummary] = useState(null);
+  const [studentImporting, setStudentImporting] = useState(false);
+  const [dobBs, setDobBs] = useState('');
+  const [gender, setGender] = useState('');
+  const [address, setAddress] = useState('');
+  const [photoUrl, setPhotoUrl] = useState('');
+  const [profileStudentId, setProfileStudentId] = useState('');
+  const [profileData, setProfileData] = useState(null);
+  const [profileTab, setProfileTab] = useState('Profile Summary');
+  const [profileForm, setProfileForm] = useState({});
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [transportForm, setTransportForm] = useState({ busRouteNo: '', stopName: '', driverContact: '', pickupTime: '', dropTime: '', busFee: '' });
+  const [disciplineForm, setDisciplineForm] = useState({ incidentDate: getTodayAD(), category: 'positive', title: '', description: '', actionReport: '' });
+  const [remarkForm, setRemarkForm] = useState({ remarkDate: getTodayAD(), terminalRemarks: '', academicFeedback: '', parentCommunication: '' });
 
   async function request(path, options = {}) {
     const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -1768,7 +1786,7 @@ function StudentFees({ accounts, onRefreshAccounts }) {
   const selectedBill = bills.find(b => String(b.id) === String(receiptBillId));
   const outstandingBills = bills.filter(b => Number(b.balance_due) > 0 && b.status !== 'cancelled');
   const filteredStudents = students.filter(s => !studentSearch ||
-    `${s.admission_no} ${s.student_name} ${s.class_name} ${s.section} ${s.roll_number}`
+    `${(s.reg_no || s.admission_no)} ${s.student_name} ${s.class_name} ${s.section} ${s.roll_number}`
       .toLowerCase().includes(studentSearch.toLowerCase()));
   const selectedBillTotal = selectedBillItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
 
@@ -1818,16 +1836,225 @@ function StudentFees({ accounts, onRefreshAccounts }) {
     }
   }
 
+  function normalizeExcelHeader(value) {
+    return String(value ?? '').toLowerCase().trim().replace(/[^a-z0-9\u0900-\u097f]/g, '');
+  }
+
+  function downloadStudentExcelTemplate() {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['Reg No', 'Student Name', 'Class', 'Section', 'Roll Number', 'DOB (BS)', 'Gender', 'Address', 'Guardian Name', 'Guardian Phone', 'Photo URL']
+    ]);
+    sheet['!cols'] = [{ wch: 16 }, { wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 30 }, { wch: 26 }, { wch: 18 }, { wch: 36 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Students');
+    XLSX.writeFile(workbook, 'student_import_template.xlsx');
+  }
+
+  async function handleStudentExcelSelect(event) {
+    const file = event.target.files?.[0];
+    setStudentImportError('');
+    setStudentImportSummary(null);
+    setStudentImportRows([]);
+    if (!file) return;
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error('Excel फाइलमा worksheet भेटिएन।');
+      const sheetRows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], { defval: '', raw: false });
+      if (!sheetRows.length) throw new Error('Excel sheet खाली छ।');
+
+      const aliases = {
+        regNo: ['regno', 'registrationno', 'registrationnumber', 'regnumber', 'studentregno', 'admissionno', 'admissionnumber', 'studentid', 'दर्तानम्बर', 'रजिष्ट्रेसननम्बर'],
+        studentName: ['studentname', 'name', 'fullname', 'pupilname', 'विद्यार्थीकोनाम', 'विद्यार्थीकोपूरानाम'],
+        className: ['class', 'classname', 'grade', 'कक्षा'],
+        section: ['section', 'सेक्सन'],
+        rollNumber: ['roll', 'rollno', 'rollnumber', 'rolnumber', 'रोलनम्बर', 'रोल'],
+        dobBs: ['dobbs', 'dateofbirthbs', 'birthdatebs', 'dateofbirth', 'जन्ममिति', 'जन्ममितिविसं'],
+        gender: ['gender', 'sex', 'लिङ्ग', 'लिंग'],
+        address: ['address', 'permanentaddress', 'ठेगाना'],
+        guardianName: ['guardianname', 'parentname', 'fathername', 'mothername', 'अभिभावककोनाम'],
+        guardianPhone: ['guardianphone', 'parentphone', 'phone', 'contact', 'mobile', 'फोन', 'मोबाइल'],
+        photoUrl: ['photourl', 'imageurl', 'photo', 'तस्बिरलिङ्क']
+      };
+      const normalizedKeys = Object.keys(sheetRows[0]).map(key => [key, normalizeExcelHeader(key)]);
+      const foundHeaders = new Set(normalizedKeys.map(([, key]) => key));
+      const requiredHeaders = [
+        ['regNo', 'Reg No'], ['studentName', 'Student Name'], ['className', 'Class'],
+        ['section', 'Section'], ['rollNumber', 'Roll Number']
+      ];
+      const missingHeaders = requiredHeaders.filter(([field]) => !aliases[field].some(alias => foundHeaders.has(normalizeExcelHeader(alias))));
+      if (missingHeaders.length) {
+        throw new Error(`यी आवश्यक column header भेटिएनन्: ${missingHeaders.map(([, label]) => label).join(', ')}. Template डाउनलोड गरेर सोही header प्रयोग गर्नुहोस्।`);
+      }
+      const readValue = (row, field) => {
+        const wanted = new Set(aliases[field].map(normalizeExcelHeader));
+        const key = Object.keys(row).find(candidate => wanted.has(normalizeExcelHeader(candidate)));
+        return key == null ? '' : String(row[key] ?? '').trim();
+      };
+      const rows = sheetRows.map((row, index) => ({
+        rowNumber: index + 2,
+        regNo: readValue(row, 'regNo'),
+        studentName: readValue(row, 'studentName'),
+        className: readValue(row, 'className'),
+        section: readValue(row, 'section'),
+        rollNumber: readValue(row, 'rollNumber'),
+        dobBs: readValue(row, 'dobBs'),
+        gender: readValue(row, 'gender'),
+        address: readValue(row, 'address'),
+        guardianName: readValue(row, 'guardianName'),
+        guardianPhone: readValue(row, 'guardianPhone'),
+        photoUrl: readValue(row, 'photoUrl')
+      })).filter(row => [row.regNo, row.studentName, row.className, row.section, row.rollNumber, row.dobBs, row.gender, row.address, row.guardianName, row.guardianPhone, row.photoUrl].some(Boolean));
+      if (!rows.length) throw new Error('Header बाहेक import गर्न मिल्ने विद्यार्थी record भेटिएन।');
+      if (rows.length > 1000) throw new Error('एकपटकमा बढीमा 1,000 विद्यार्थी मात्र import गर्नुहोस्। ठूलो फाइललाई भागमा विभाजन गर्नुहोस्।');
+      setStudentImportRows(rows);
+      setStudentImportFileName(file.name);
+    } catch (e) {
+      setStudentImportError(e.message || 'Excel फाइल पढ्न सकिएन।');
+      setStudentImportFileName(file.name);
+    } finally {
+      // Permit selecting the same file again after correcting it.
+      event.target.value = '';
+    }
+  }
+
+  async function importStudentExcel() {
+    if (!studentImportRows.length) return;
+    setStudentImporting(true);
+    setStudentImportError('');
+    setStudentImportSummary(null);
+    setSuccess('');
+    try {
+      const result = await request('/api/fee/students/import', {
+        method: 'POST',
+        body: JSON.stringify({ organizationId: ORGANIZATION_ID, students: studentImportRows })
+      });
+      setStudentImportSummary(result);
+      setSuccess(`Excel import पूरा भयो: ${result.imported || 0} विद्यार्थी थपिए; ${result.skipped || 0} वटा duplicate/अमान्य record skip भए।`);
+      await reloadAll();
+    } catch (e) {
+      setStudentImportError(e.message || 'Excel बाट विद्यार्थी import गर्न सकिएन।');
+    } finally {
+      setStudentImporting(false);
+    }
+  }
+
+  async function openStudentProfile(studentOrId) {
+    const student = typeof studentOrId === 'object' ? studentOrId : students.find(item => String(item.id) === String(studentOrId));
+    const id = student?.id ?? studentOrId;
+    if (!id) return;
+    setProfileStudentId(String(id));
+    setProfileLoading(true); setError(''); setSuccess('');
+    try {
+      const data = await request(`/api/fee/students/${encodeURIComponent(id)}/profile?organizationId=${ORGANIZATION_ID}`);
+      setProfileData(data);
+      setProfileForm({
+        studentName: data.student.student_name || '', className: data.student.class_name || '',
+        section: data.student.section || '', rollNumber: data.student.roll_number || '',
+        guardianName: data.student.guardian_name || '', guardianPhone: data.student.guardian_phone || '',
+        dobBs: data.student.dob_bs || '', gender: data.student.gender || '',
+        address: data.student.address || '', photoUrl: data.student.photo_url || ''
+      });
+      setTransportForm({
+        busRouteNo: data.transport?.bus_route_no || '', stopName: data.transport?.stop_name || '',
+        driverContact: data.transport?.driver_contact || '', pickupTime: data.transport?.pickup_time || '',
+        dropTime: data.transport?.drop_time || '', busFee: data.transport?.bus_fee ?? ''
+      });
+      setProfileTab('Profile Summary'); setTab('Student Profile');
+    } catch (e) { setError(`Student Profile load भएन: ${e.message}`); }
+    finally { setProfileLoading(false); }
+  }
+
+  async function refreshStudentProfile(studentId = profileStudentId) {
+    if (!studentId) return;
+    const data = await request(`/api/fee/students/${encodeURIComponent(studentId)}/profile?organizationId=${ORGANIZATION_ID}`);
+    setProfileData(data);
+    setProfileForm(current => ({ ...current,
+      studentName: data.student.student_name || '', className: data.student.class_name || '',
+      section: data.student.section || '', rollNumber: data.student.roll_number || '',
+      guardianName: data.student.guardian_name || '', guardianPhone: data.student.guardian_phone || '',
+      dobBs: data.student.dob_bs || '', gender: data.student.gender || '',
+      address: data.student.address || '', photoUrl: data.student.photo_url || ''
+    }));
+    setTransportForm({ busRouteNo: data.transport?.bus_route_no || '', stopName: data.transport?.stop_name || '',
+      driverContact: data.transport?.driver_contact || '', pickupTime: data.transport?.pickup_time || '',
+      dropTime: data.transport?.drop_time || '', busFee: data.transport?.bus_fee ?? '' });
+    await reloadAll();
+  }
+
+  async function saveStudentProfile(event) {
+    event.preventDefault(); if (!profileStudentId) return;
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      const result = await request(`/api/fee/students/${encodeURIComponent(profileStudentId)}/profile?organizationId=${ORGANIZATION_ID}`, {
+        method: 'PATCH', body: JSON.stringify({ organizationId: ORGANIZATION_ID, ...profileForm })
+      });
+      setSuccess(`${result.student_name} को विवरण सुरक्षित भयो।`);
+      await refreshStudentProfile(profileStudentId);
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function saveStudentTransport(event) {
+    event.preventDefault(); if (!profileStudentId) return;
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      await request(`/api/fee/students/${encodeURIComponent(profileStudentId)}/transport`, {
+        method: 'PUT', body: JSON.stringify({ organizationId: ORGANIZATION_ID, ...transportForm })
+      });
+      setSuccess('Transport Info सुरक्षित भयो।'); await refreshStudentProfile(profileStudentId);
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function saveDisciplineLog(event) {
+    event.preventDefault(); if (!profileStudentId) return;
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      await request(`/api/fee/students/${encodeURIComponent(profileStudentId)}/discipline`, {
+        method: 'POST', body: JSON.stringify({ organizationId: ORGANIZATION_ID, ...disciplineForm })
+      });
+      setDisciplineForm({ incidentDate: getTodayAD(), category: 'positive', title: '', description: '', actionReport: '' });
+      setSuccess('Discipline / Student Log सुरक्षित भयो।'); await refreshStudentProfile(profileStudentId);
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function saveTeacherRemark(event) {
+    event.preventDefault(); if (!profileStudentId) return;
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      await request(`/api/fee/students/${encodeURIComponent(profileStudentId)}/remarks`, {
+        method: 'POST', body: JSON.stringify({ organizationId: ORGANIZATION_ID, ...remarkForm })
+      });
+      setRemarkForm({ remarkDate: getTodayAD(), terminalRemarks: '', academicFeedback: '', parentCommunication: '' });
+      setSuccess('Teacher Remarks सुरक्षित भयो।'); await refreshStudentProfile(profileStudentId);
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function markStudentAttendance(status) {
+    if (!profileStudentId) return;
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      await request(`/api/fee/students/${encodeURIComponent(profileStudentId)}/attendance`, {
+        method: 'POST', body: JSON.stringify({ organizationId: ORGANIZATION_ID, attendanceDate: getTodayAD(), status })
+      });
+      setSuccess(`आजको attendance ${status} रूपमा सुरक्षित भयो।`); await refreshStudentProfile(profileStudentId);
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
   async function createStudent(event) {
     event.preventDefault();
     setSaving(true); setError(''); setSuccess('');
     try {
       const saved = await request('/api/fee/students', {
         method: 'POST',
-        body: JSON.stringify({ organizationId: ORGANIZATION_ID, admissionNo, studentName, className, section, rollNumber, guardianName, guardianPhone })
+        body: JSON.stringify({ organizationId: ORGANIZATION_ID, regNo, studentName, className, section, rollNumber, guardianName, guardianPhone, dobBs, gender, address, photoUrl })
       });
       setSuccess(`विद्यार्थी ${saved.student_name} सफलतापूर्वक दर्ता भयो।`);
-      setAdmissionNo(''); setStudentName(''); setClassName(''); setSection('A'); setRollNumber(''); setGuardianName(''); setGuardianPhone('');
+      setRegNo(''); setStudentName(''); setClassName(''); setSection('A'); setRollNumber(''); setGuardianName(''); setGuardianPhone(''); setDobBs(''); setGender(''); setAddress(''); setPhotoUrl('');
       await reloadAll();
     } catch (e) { setError(e.message); }
     finally { setSaving(false); }
@@ -1939,21 +2166,49 @@ function StudentFees({ accounts, onRefreshAccounts }) {
 
       <div style={styles.reportTabs}>
         {[
-          ['Students', 'विद्यार्थी'], ['Fee Titles', 'Fee Titles'], ['Monthly Bill', 'Monthly Bill'],
+          ['Students', 'विद्यार्थी'], ['Student Profile', 'Student Profile'], ['Fee Titles', 'Fee Titles'], ['Monthly Bill', 'Monthly Bill'],
           ['Receive Fee', 'Receipt काट्ने'], ['Student Ledger', 'विद्यार्थी Ledger'], ['Receipt Register', 'Receipt Register']
         ].map(([key, label]) => <button key={key} type="button" onClick={() => setTab(key)} style={{ ...styles.reportTab, ...(tab === key ? styles.reportTabActive : {}) }}>{label}</button>)}
       </div>
 
       {tab === 'Students' && <>
         <section style={styles.panel}>
-          {panelHeader('नयाँ विद्यार्थी दर्ता', 'Admission No, Class, Section र Roll Number विद्यार्थीको खातासँग जोडिन्छ।')}
+          {panelHeader('Excel बाट विद्यार्थी Import', 'Excel (.xlsx/.xls) वा CSV बाट एकैपटक विद्यार्थी दर्ता गर्नुहोस्। आवश्यक header: Reg No, Student Name, Class, Section, Roll Number।')}
+          <div style={styles.formGrid}>
+            <label style={styles.label}>Excel / CSV फाइल छान्नुहोस्
+              <input style={styles.input} type="file" accept=".xlsx,.xls,.csv" onChange={handleStudentExcelSelect} />
+              <small style={{ color: '#64748b', fontWeight: 400 }}>{studentImportFileName || 'अधिकतम 1,000 विद्यार्थी एकपटकमा'}</small>
+            </label>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'start' }}>
+              <button type="button" style={styles.secondaryButton} onClick={downloadStudentExcelTemplate}><FileText size={15} /> Excel Template Download</button>
+              <button type="button" style={styles.primaryButton} onClick={importStudentExcel} disabled={studentImporting || !studentImportRows.length}><Plus size={15} /> {studentImporting ? 'Import हुँदैछ...' : `${studentImportRows.length} विद्यार्थी Import`}</button>
+            </div>
+          </div>
+          {studentImportError && <Notice message={studentImportError} type="error" />}
+          {studentImportSummary && <div style={{ ...styles.notice, ...styles.infoNotice, marginTop: 12 }}>
+            <div><strong>Import परिणाम:</strong> {studentImportSummary.imported || 0} थपिए · {studentImportSummary.skipped || 0} skip · {(studentImportSummary.errors || []).length} विवरण</div>
+            {(studentImportSummary.errors || []).length > 0 && <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>{studentImportSummary.errors.slice(0, 10).map((item, index) => <li key={`${item.rowNumber || item.row || index}-${index}`}>Row {item.rowNumber || item.row || '—'}: {item.message}</li>)}</ul>}
+          </div>}
+          {studentImportRows.length > 0 && <div style={{ marginTop: 14 }}>
+            <p style={{ color: '#475569', fontSize: 13 }}>Import गर्नुअघि preview (पहिला 10 record): {studentImportRows.length} वटा record भेटिए। Duplicate Reg No वा Class/Section/Roll भएका record skip हुन सक्छन्।</p>
+            <div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Excel Row', 'Reg No', 'Student Name', 'Class', 'Section', 'Roll', 'DOB (BS)', 'Gender', 'Guardian', 'Phone'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>
+              {studentImportRows.slice(0, 10).map(row => <tr key={row.rowNumber}><td style={{ padding: 10 }}>{row.rowNumber}</td><td style={{ padding: 10 }}>{row.regNo || '—'}</td><td style={{ padding: 10 }}>{row.studentName || '—'}</td><td style={{ padding: 10 }}>{row.className || '—'}</td><td style={{ padding: 10 }}>{row.section || '—'}</td><td style={{ padding: 10 }}>{row.rollNumber || '—'}</td><td style={{ padding: 10 }}>{row.dobBs || '—'}</td><td style={{ padding: 10 }}>{row.gender || '—'}</td><td style={{ padding: 10 }}>{row.guardianName || '—'}</td><td style={{ padding: 10 }}>{row.guardianPhone || '—'}</td></tr>)}
+            </tbody></table></div>
+          </div>}
+        </section>
+        <section style={styles.panel}>
+          {panelHeader('नयाँ विद्यार्थी दर्ता', 'Reg No, Class, Section र Roll Number विद्यार्थीको खातासँग जोडिन्छ।')}
           <form onSubmit={createStudent}>
             <div style={styles.formGrid}>
-              {textField('Admission No *', admissionNo, setAdmissionNo, { required: true, maxLength: 50 })}
+              {textField('Reg No *', regNo, setRegNo, { required: true, maxLength: 50 })}
               {textField('विद्यार्थीको पूरा नाम *', studentName, setStudentName, { required: true, maxLength: 200 })}
               {textField('Class *', className, setClassName, { required: true, placeholder: 'जस्तै: 5' })}
               {textField('Section *', section, setSection, { required: true, placeholder: 'A' })}
               {textField('Roll Number *', rollNumber, setRollNumber, { required: true })}
+              {textField('जन्ममिति (वि.सं. / DOB BS)', dobBs, setDobBs, { placeholder: 'जस्तै: २०७५-०४-१५' })}
+              <label style={styles.label}>लिङ्ग / Gender<select style={styles.selectInput} value={gender} onChange={e => setGender(e.target.value)}><option value="">छान्नुहोस्</option><option value="male">Male / पुरुष</option><option value="female">Female / महिला</option><option value="other">Other / अन्य</option></select></label>
+              {textField('ठेगाना / Address', address, setAddress, { maxLength: 500 })}
+              {textField('Photo URL (optional)', photoUrl, setPhotoUrl, { type: 'url', maxLength: 1000 })}
               {textField('अभिभावकको नाम', guardianName, setGuardianName, { maxLength: 200 })}
               {textField('अभिभावकको फोन', guardianPhone, setGuardianPhone, { maxLength: 40 })}
             </div>
@@ -1961,14 +2216,121 @@ function StudentFees({ accounts, onRefreshAccounts }) {
           </form>
         </section>
         <section style={styles.panel}>
-          {panelHeader('विद्यार्थी सूची', `${students.length} विद्यार्थी`, <input style={{ ...styles.input, maxWidth: 300, marginBottom: 0 }} value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="नाम, admission, class, roll खोज्नुहोस्..." />)}
+          {panelHeader('विद्यार्थी सूची', `${students.length} विद्यार्थी`, <input style={{ ...styles.input, maxWidth: 300, marginBottom: 0 }} value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="Reg No, नाम, class, roll खोज्नुहोस्..." />)}
           <div style={styles.tableWrap}><table style={styles.table}><thead><tr>
-            {['Admission No', 'विद्यार्थी', 'Class', 'Section', 'Roll', 'अभिभावक', 'फोन', 'Ledger'].map(h => <th key={h} style={{ padding: 12, borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>{h}</th>)}
+            {['Reg No', 'विद्यार्थी', 'Class', 'Section', 'Roll', 'DOB (BS)', 'अभिभावक', 'फोन', 'दर्ता मिति (BS/AD)', 'Profile / Ledger'].map(h => <th key={h} style={{ padding: 12, borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>{h}</th>)}
           </tr></thead><tbody>{filteredStudents.map(s => <tr key={s.id}>
-            <td style={{ padding: 12 }}>{s.admission_no}</td><td style={{ padding: 12, fontWeight: 600 }}>{s.student_name}</td><td style={{ padding: 12 }}>{s.class_name}</td><td style={{ padding: 12 }}>{s.section}</td><td style={{ padding: 12 }}>{s.roll_number}</td><td style={{ padding: 12 }}>{s.guardian_name || '—'}</td><td style={{ padding: 12 }}>{s.guardian_phone || '—'}</td>
-            <td style={{ padding: 12 }}><button type="button" style={styles.secondaryButton} onClick={() => { setLedgerStudentId(String(s.id)); setTab('Student Ledger'); loadStudentLedger(String(s.id)); }}>Ledger हेर्नुहोस्</button></td>
-          </tr>)}{!filteredStudents.length && <tr><td colSpan="8" style={styles.emptyCell}>{loading ? 'Loading...' : 'विद्यार्थी छैन। माथिको फारमबाट दर्ता गर्नुहोस्।'}</td></tr>}</tbody></table></div>
+            <td style={{ padding: 12 }}>{(s.reg_no || s.admission_no)}</td><td style={{ padding: 12, fontWeight: 600 }}>{s.student_name}</td><td style={{ padding: 12 }}>{s.class_name}</td><td style={{ padding: 12 }}>{s.section}</td><td style={{ padding: 12 }}>{s.roll_number}</td><td style={{ padding: 12 }}>{s.dob_bs || '—'}</td><td style={{ padding: 12 }}>{s.guardian_name || '—'}</td><td style={{ padding: 12 }}>{s.guardian_phone || '—'}</td>
+            <td style={{ padding: 12 }}><strong>{toBS(formatDateAD(s.created_at)) || '—'}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(s.created_at) || '—'}</small></td>
+            <td style={{ padding: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}><button type="button" style={styles.secondaryButton} onClick={() => openStudentProfile(s)}>Profile हेर्नुहोस्</button><button type="button" style={styles.secondaryButton} onClick={() => { setLedgerStudentId(String(s.id)); setTab('Student Ledger'); loadStudentLedger(String(s.id)); }}>Ledger</button></td>
+          </tr>)}{!filteredStudents.length && <tr><td colSpan="10" style={styles.emptyCell}>{loading ? 'Loading...' : 'विद्यार्थी छैन। माथिको फारमबाट दर्ता गर्नुहोस्।'}</td></tr>}</tbody></table></div>
         </section>
+      </>}
+
+      {tab === 'Student Profile' && <>
+        {!profileData ? <section style={styles.panel}>
+          {panelHeader('Student Profile / विद्यार्थी प्रोफाइल', 'विद्यार्थी सूचीबाट Profile हेर्नुहोस् छान्नुहोस्।')}
+          <div style={styles.formGrid}>
+            {selectField('विद्यार्थी छान्नुहोस्', profileStudentId, value => openStudentProfile(value), students.map(st => ({ value: String(st.id), label: `${st.reg_no || st.admission_no} · ${st.student_name} · ${st.class_name}-${st.section} / ${st.roll_number}` })), 'विद्यार्थी छान्नुहोस्')}
+            <div style={{ alignSelf: 'end' }}><button type="button" style={styles.primaryButton} onClick={() => openStudentProfile(profileStudentId)} disabled={!profileStudentId || profileLoading}><Search size={15} /> Profile खोल्नुहोस्</button></div>
+          </div>
+        </section> : <>
+          <section style={styles.panel}>
+            {panelHeader(`Student Profile · ${profileData.student.student_name}`, `${profileData.student.reg_no || profileData.student.admission_no} · Class ${profileData.student.class_name}-${profileData.student.section} · Roll ${profileData.student.roll_number}`, <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" style={styles.secondaryButton} onClick={() => { setProfileData(null); setTab('Students'); }}>विद्यार्थी सूची</button><button type="button" style={styles.secondaryButton} onClick={() => refreshStudentProfile(profileStudentId)} disabled={profileLoading}><RefreshCw size={14} /> Refresh</button></div>)}
+            <div style={{ ...styles.reportTabs, marginTop: 14 }}>
+              {['Profile Summary', 'Ledger & Billing', 'Transport Info', 'Discipline & Logs', 'Teacher Remarks'].map(name => <button key={name} type="button" onClick={() => setProfileTab(name)} style={{ ...styles.reportTab, ...(profileTab === name ? styles.reportTabActive : {}) }}>{name}</button>)}
+            </div>
+          </section>
+          {profileTab === 'Profile Summary' && <>
+            <section style={styles.panel}>
+              {panelHeader('Profile Summary / विद्यार्थीको विवरण', 'जन्ममिति नेपाली वि.सं.मा राख्नुहोस्। Photo को लागि optional image URL प्रयोग हुन्छ।')}
+              <form onSubmit={saveStudentProfile}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(130px, 180px) 1fr', gap: 20, alignItems: 'start' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    {profileForm.photoUrl ? <img src={profileForm.photoUrl} alt="Student photo" onError={e => { e.currentTarget.style.display = 'none'; }} style={{ width: 128, height: 128, borderRadius: 16, objectFit: 'cover', border: '1px solid #cbd5e1' }} /> : <div style={{ width: 128, height: 128, borderRadius: 16, background: '#e0e7ff', color: '#3730a3', display: 'grid', placeItems: 'center', fontSize: 38, fontWeight: 700, margin: '0 auto' }}>{String(profileForm.studentName || '?').trim().charAt(0).toUpperCase()}</div>}
+                    <label style={{ ...styles.label, marginTop: 10, textAlign: 'left' }}>Photo URL<input style={styles.input} type="url" value={profileForm.photoUrl || ''} onChange={e => setProfileForm(current => ({ ...current, photoUrl: e.target.value }))} placeholder="https://..." /></label>
+                  </div>
+                  <div style={styles.formGrid}>
+                    {textField('Reg No', profileData.student.reg_no || profileData.student.admission_no, () => {}, { readOnly: true })}
+                    {textField('विद्यार्थीको पूरा नाम *', profileForm.studentName || '', value => setProfileForm(current => ({ ...current, studentName: value })), { required: true, maxLength: 200 })}
+                    {textField('जन्ममिति (वि.सं. / DOB BS)', profileForm.dobBs || '', value => setProfileForm(current => ({ ...current, dobBs: value })), { placeholder: 'जस्तै: २०७५-०४-१५' })}
+                    <label style={styles.label}>लिङ्ग / Gender<select style={styles.selectInput} value={profileForm.gender || ''} onChange={e => setProfileForm(current => ({ ...current, gender: e.target.value }))}><option value="">छान्नुहोस्</option><option value="male">Male / पुरुष</option><option value="female">Female / महिला</option><option value="other">Other / अन्य</option></select></label>
+                    {textField('Class *', profileForm.className || '', value => setProfileForm(current => ({ ...current, className: value })), { required: true })}
+                    {textField('Section *', profileForm.section || '', value => setProfileForm(current => ({ ...current, section: value })), { required: true })}
+                    {textField('Roll Number *', profileForm.rollNumber || '', value => setProfileForm(current => ({ ...current, rollNumber: value })), { required: true })}
+                    {textField('अभिभावकको नाम', profileForm.guardianName || '', value => setProfileForm(current => ({ ...current, guardianName: value })), { maxLength: 200 })}
+                    {textField('अभिभावकको फोन', profileForm.guardianPhone || '', value => setProfileForm(current => ({ ...current, guardianPhone: value })), { maxLength: 40 })}
+                    {textField('ठेगाना / Address', profileForm.address || '', value => setProfileForm(current => ({ ...current, address: value })), { maxLength: 500 })}
+                  </div>
+                </div>
+                <button type="submit" style={{ ...styles.primaryButton, marginTop: 12 }} disabled={saving}><FileText size={15} /> विवरण Save गर्नुहोस्</button>
+              </form>
+            </section>
+            <section style={styles.panel}>
+              {panelHeader('Attendance Summary / हाजिरी सारांश', 'यो Student Fee module भित्रको attendance record हो; अर्को attendance system सँग अहिले स्वतः जोडिएको छैन।')}
+              <div style={styles.metricsGrid}>
+                <Metric title="Present / उपस्थित" value={profileData.attendanceSummary.present_days} note="रेकर्ड गरिएको दिन" icon={<CheckCircle2 size={19} />} color="#059669" bg="#d1fae5" />
+                <Metric title="Absent / अनुपस्थित" value={profileData.attendanceSummary.absent_days} note="रेकर्ड गरिएको दिन" icon={<AlertCircle size={19} />} color="#dc2626" bg="#fee2e2" />
+                <Metric title="Attendance %" value={`${profileData.attendanceSummary.attendance_percent}%`} note={`${profileData.attendanceSummary.total_marked} दिन मार्क भएको`} icon={<CalendarDays size={19} />} color="#4f46e5" bg="#eef2ff" />
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>{['present', 'absent', 'late', 'leave'].map(status => <button key={status} type="button" style={status === 'absent' ? styles.secondaryButton : styles.primaryButton} disabled={saving} onClick={() => markStudentAttendance(status)}>{({ present: 'आज Present', absent: 'आज Absent', late: 'आज Late', leave: 'आज Leave' })[status]}</button>)}</div>
+              <p style={{ fontSize: 12, color: '#64748b' }}>आजको मिति (BS): {toBS(getTodayAD())} · (AD): {getTodayAD()}</p>
+              <h3 style={{ fontSize: 14, color: '#334155' }}>हालसालको हाजिरी</h3>
+              <div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Date (BS/AD)', 'Status'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{profileData.attendanceRecent.map(item => <tr key={item.id}><td style={{ padding: 10 }}><strong>{toBS(formatDateAD(item.attendance_date))}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(item.attendance_date)}</small></td><td style={{ padding: 10 }}>{String(item.status).toUpperCase()}</td></tr>)}{!profileData.attendanceRecent.length && <tr><td colSpan="2" style={styles.emptyCell}>अहिलेसम्म attendance रेकर्ड छैन।</td></tr>}</tbody></table></div>
+            </section>
+            <section style={styles.panel}>
+              {panelHeader('Quick Actions / छिटो काम')}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button type="button" style={styles.primaryButton} onClick={() => { setBillStudentId(String(profileStudentId)); setTab('Monthly Bill'); }}><FileText size={15} /> Generate Bill</button>
+                <button type="button" style={styles.primaryButton} onClick={() => { const due = outstandingBills.find(b => String(b.student_id) === String(profileStudentId)); setReceiptBillId(due ? String(due.id) : ''); setReceiptAmount(due ? String(due.balance_due) : ''); setTab('Receive Fee'); }}><ReceiptText size={15} /> Receive Fee</button>
+                <button type="button" style={styles.secondaryButton} onClick={() => { setLedgerStudentId(String(profileStudentId)); setTab('Student Ledger'); loadStudentLedger(profileStudentId); }}><BookOpen size={15} /> Student Ledger</button>
+                <button type="button" style={styles.secondaryButton} onClick={() => { const latest = receipts.find(r => String(r.student_id) === String(profileStudentId)); if (latest) printStudentReceipt(latest); else setError('यो विद्यार्थीको receipt अझै छैन।'); }}><Printer size={15} /> Latest Receipt / Download PDF</button>
+              </div>
+            </section>
+          </>}
+          {profileTab === 'Ledger & Billing' && <section style={styles.panel}>
+            {panelHeader('Ledger & Billing / बिल तथा भुक्तानी', 'Current Due, bill history र payment history।', <button type="button" style={styles.primaryButton} onClick={() => { setBillStudentId(String(profileStudentId)); setTab('Monthly Bill'); }}><Plus size={15} /> Generate Bill</button>)}
+            {(() => { const sbills = bills.filter(b => String(b.student_id) === String(profileStudentId)); const sreceipts = receipts.filter(r => String(r.student_id) === String(profileStudentId)); const billed = sbills.reduce((sum, b) => sum + Number(b.total_amount || 0), 0); const received = sreceipts.reduce((sum, r) => sum + Number(r.total_amount || 0), 0); const due = Math.max(0, billed - received); return <>
+              <div style={styles.metricsGrid}><Metric title="Current Due / बाँकी" value={money(due)} note={`${sbills.length} bills`} icon={<AlertCircle size={19} />} color="#d97706" bg="#fef3c7" /><Metric title="Billed / बिल" value={money(billed)} note="कुल billing" icon={<FileText size={19} />} color="#4f46e5" bg="#eef2ff" /><Metric title="Received / प्राप्त" value={money(received)} note={`${sreceipts.length} receipts`} icon={<Wallet size={19} />} color="#059669" bg="#d1fae5" /></div>
+              <h3 style={{ fontSize: 14 }}>Bill History</h3><div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Bill No', 'Month (BS/AD)', 'Billed', 'Received', 'Due', 'Status'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{sbills.map(b => <tr key={b.id}><td style={{ padding: 10 }}>{b.bill_number}</td><td style={{ padding: 10 }}><strong>{toBS(String(b.fee_month).slice(0, 10))}</strong><small style={{ display: 'block', color: '#64748b' }}>{String(b.fee_month).slice(0, 10)}</small></td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.total_amount)}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.total_received)}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.balance_due)}</td><td style={{ padding: 10 }}>{b.status}</td></tr>)}{!sbills.length && <tr><td colSpan="6" style={styles.emptyCell}>Bill छैन। Generate Bill प्रयोग गर्नुहोस्।</td></tr>}</tbody></table></div>
+              <h3 style={{ fontSize: 14, marginTop: 20 }}>Payment History</h3><div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Receipt No', 'Date (BS/AD)', 'Mode', 'Paid To', 'Amount', 'Receipt'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{sreceipts.map(r => <tr key={r.id}><td style={{ padding: 10 }}>{r.receipt_number}</td><td style={{ padding: 10 }}><strong>{toBS(formatDateAD(r.receipt_date))}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(r.receipt_date)}</small></td><td style={{ padding: 10 }}>{String(r.payment_method).toUpperCase()}</td><td style={{ padding: 10 }}>{r.payment_account_name}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(r.total_amount)}</td><td style={{ padding: 10 }}><button type="button" style={styles.secondaryButton} onClick={() => printStudentReceipt(r)}><Printer size={14} /> Print / PDF</button></td></tr>)}{!sreceipts.length && <tr><td colSpan="6" style={styles.emptyCell}>Payment छैन।</td></tr>}</tbody></table></div>
+            </>; })()}
+          </section>}
+          {profileTab === 'Transport Info' && <section style={styles.panel}>
+            {panelHeader('Transport Info / यातायात विवरण', 'Bus route, stop, driver contact, pickup/drop time र bus fee।')}
+            <form onSubmit={saveStudentTransport}><div style={styles.formGrid}>
+              {textField('Bus Route No', transportForm.busRouteNo || '', value => setTransportForm(current => ({ ...current, busRouteNo: value })), { maxLength: 50 })}
+              {textField('Stop Name', transportForm.stopName || '', value => setTransportForm(current => ({ ...current, stopName: value })), { maxLength: 150 })}
+              {textField('Bus Driver Contact', transportForm.driverContact || '', value => setTransportForm(current => ({ ...current, driverContact: value })), { maxLength: 40 })}
+              {textField('Pickup Time', transportForm.pickupTime || '', value => setTransportForm(current => ({ ...current, pickupTime: value })), { type: 'time' })}
+              {textField('Drop Time', transportForm.dropTime || '', value => setTransportForm(current => ({ ...current, dropTime: value })), { type: 'time' })}
+              {textField('Bus Fee (Rs.)', transportForm.busFee ?? '', value => setTransportForm(current => ({ ...current, busFee: value })), { type: 'number', min: '0', step: '0.01' })}
+            </div><button type="submit" style={styles.primaryButton} disabled={saving}><FileText size={15} /> Transport Save गर्नुहोस्</button></form>
+          </section>}
+          {profileTab === 'Discipline & Logs' && <>
+            <section style={styles.panel}>{panelHeader('Discipline & Logs / घटना र व्यवहार रेकर्ड', 'Positive / Negative घटना, विवरण र action report लेख्नुहोस्।')}
+              <form onSubmit={saveDisciplineLog}><div style={styles.formGrid}>
+                <div><label style={styles.label}>Incident Date (AD)<input type="date" required style={styles.input} value={disciplineForm.incidentDate} onChange={e => setDisciplineForm(current => ({ ...current, incidentDate: e.target.value }))} /></label><small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>नेपाली मिति (BS): {toBS(disciplineForm.incidentDate)}</small></div>
+                {selectField('Badge / प्रकार', disciplineForm.category, value => setDisciplineForm(current => ({ ...current, category: value })), [{ value: 'positive', label: 'Positive / प्रशंसनीय' }, { value: 'negative', label: 'Negative / अनुशासन घटना' }])}
+                {textField('Title *', disciplineForm.title, value => setDisciplineForm(current => ({ ...current, title: value })), { required: true, maxLength: 200 })}
+                <label style={styles.label}>Incident / विवरण<textarea style={{ ...styles.input, minHeight: 90, resize: 'vertical' }} value={disciplineForm.description} onChange={e => setDisciplineForm(current => ({ ...current, description: e.target.value }))} /></label>
+                <label style={styles.label}>Action Report / गरिएको कारबाही<textarea style={{ ...styles.input, minHeight: 90, resize: 'vertical' }} value={disciplineForm.actionReport} onChange={e => setDisciplineForm(current => ({ ...current, actionReport: e.target.value }))} /></label>
+              </div><button type="submit" style={styles.primaryButton} disabled={saving}><Plus size={15} /> Log Save गर्नुहोस्</button></form>
+            </section>
+            <section style={styles.panel}>{panelHeader('Incident History', `${profileData.disciplineLogs.length} logs`)}<div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Date (BS/AD)', 'Badge', 'Title', 'Details', 'Action Report'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{profileData.disciplineLogs.map(log => <tr key={log.id}><td style={{ padding: 10 }}><strong>{toBS(formatDateAD(log.incident_date))}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(log.incident_date)}</small></td><td style={{ padding: 10 }}><span style={{ ...styles.typeBadge, background: log.category === 'positive' ? '#d1fae5' : '#fee2e2', color: log.category === 'positive' ? '#065f46' : '#991b1b' }}>{log.category}</span></td><td style={{ padding: 10 }}>{log.title}</td><td style={{ padding: 10 }}>{log.description || '—'}</td><td style={{ padding: 10 }}>{log.action_report || '—'}</td></tr>)}{!profileData.disciplineLogs.length && <tr><td colSpan="5" style={styles.emptyCell}>अहिलेसम्म log छैन।</td></tr>}</tbody></table></div></section>
+          </>}
+          {profileTab === 'Teacher Remarks' && <>
+            <section style={styles.panel}>{panelHeader('Teacher Remarks / शिक्षकको टिप्पणी', 'Terminal remarks, academic feedback र parent communications सुरक्षित गर्नुहोस्।')}
+              <form onSubmit={saveTeacherRemark}><div style={styles.formGrid}>
+                <div><label style={styles.label}>Remark Date (AD)<input type="date" required style={styles.input} value={remarkForm.remarkDate} onChange={e => setRemarkForm(current => ({ ...current, remarkDate: e.target.value }))} /></label><small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>नेपाली मिति (BS): {toBS(remarkForm.remarkDate)}</small></div>
+                <label style={styles.label}>Terminal Remarks<textarea style={{ ...styles.input, minHeight: 90, resize: 'vertical' }} value={remarkForm.terminalRemarks} onChange={e => setRemarkForm(current => ({ ...current, terminalRemarks: e.target.value }))} /></label>
+                <label style={styles.label}>Academic Feedback<textarea style={{ ...styles.input, minHeight: 90, resize: 'vertical' }} value={remarkForm.academicFeedback} onChange={e => setRemarkForm(current => ({ ...current, academicFeedback: e.target.value }))} /></label>
+                <label style={styles.label}>Parent Communications<textarea style={{ ...styles.input, minHeight: 90, resize: 'vertical' }} value={remarkForm.parentCommunication} onChange={e => setRemarkForm(current => ({ ...current, parentCommunication: e.target.value }))} /></label>
+              </div><button type="submit" style={styles.primaryButton} disabled={saving}><Plus size={15} /> Remark Save गर्नुहोस्</button></form>
+            </section>
+            <section style={styles.panel}>{panelHeader('Saved Remarks', `${profileData.teacherRemarks.length} records`)}<div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Date (BS/AD)', 'Terminal Remarks', 'Academic Feedback', 'Parent Communication'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{profileData.teacherRemarks.map(item => <tr key={item.id}><td style={{ padding: 10 }}><strong>{toBS(formatDateAD(item.remark_date))}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(item.remark_date)}</small></td><td style={{ padding: 10 }}>{item.terminal_remarks || '—'}</td><td style={{ padding: 10 }}>{item.academic_feedback || '—'}</td><td style={{ padding: 10 }}>{item.parent_communication || '—'}</td></tr>)}{!profileData.teacherRemarks.length && <tr><td colSpan="4" style={styles.emptyCell}>अहिलेसम्म remark छैन।</td></tr>}</tbody></table></div></section>
+          </>}
+        </>}
       </>}
 
       {tab === 'Fee Titles' && <>
@@ -1999,9 +2361,9 @@ function StudentFees({ accounts, onRefreshAccounts }) {
           {panelHeader('Generate Monthly Fee Bill', 'एक विद्यार्थीको एक महिनामा एकपटक bill बनाउन मिल्छ। Partial payment receipt बाट लिन सकिन्छ।')}
           <form onSubmit={createMonthlyBill}>
             <div style={styles.formGrid}>
-              {selectField('विद्यार्थी *', billStudentId, setBillStudentId, activeStudents.map(s => ({ value: String(s.id), label: `${s.admission_no} · ${s.student_name} · Class ${s.class_name}-${s.section} · Roll ${s.roll_number}` })), 'विद्यार्थी छान्नुहोस्')}
-              {textField('Fee Month *', billMonth, setBillMonth, { required: true, type: 'month' })}
-              {textField('Due Date', billDueDate, setBillDueDate, { type: 'date' })}
+              {selectField('विद्यार्थी *', billStudentId, setBillStudentId, activeStudents.map(s => ({ value: String(s.id), label: `${(s.reg_no || s.admission_no)} · ${s.student_name} · Class ${s.class_name}-${s.section} · Roll ${s.roll_number}` })), 'विद्यार्थी छान्नुहोस्')}
+              <div><label style={styles.label}>Fee Month * / महिना (AD)<input style={styles.input} value={billMonth} onChange={e => setBillMonth(e.target.value)} required type="month" /></label><small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>नेपाली महिना (BS): {billMonth ? toBS(`${billMonth}-01`) : '—'}</small></div>
+              <div><label style={styles.label}>Due Date (AD)<input style={styles.input} value={billDueDate} onChange={e => setBillDueDate(e.target.value)} type="date" /></label><small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>नेपाली मिति (BS): {billDueDate ? toBS(billDueDate) : '—'}</small></div>
             </div>
             <h3 style={{ fontSize: 14, margin: '14px 0', color: '#334155' }}>Bill मा समावेश गर्ने Fee Titles</h3>
             {!feeTitles.filter(t => t.is_active !== false).length && <Notice type="error" message="पहिले Fee Titles tab मा Fee Title बनाउनुहोस्। प्रत्येक title मा Income Ledger link हुनुपर्छ।" />}
@@ -2016,8 +2378,8 @@ function StudentFees({ accounts, onRefreshAccounts }) {
         </section>
         <section style={styles.panel}>
           {panelHeader('Fee Bill Register', `${bills.length} bills`, <input style={{ ...styles.input, maxWidth: 180, marginBottom: 0 }} type="month" value={selectedBillFilterMonth} onChange={e => setSelectedBillFilterMonth(e.target.value)} />)}
-          <div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Bill No', 'Month', 'Admission', 'Student', 'Class/Section', 'Billed', 'Received', 'Balance', 'Status'].map(h => <th key={h} style={{ padding: 12, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>
-            {bills.filter(b => !selectedBillFilterMonth || String(b.fee_month).slice(0, 7) === selectedBillFilterMonth).map(b => <tr key={b.id}><td style={{ padding: 12, fontWeight: 600 }}>{b.bill_number}</td><td style={{ padding: 12 }}>{String(b.fee_month).slice(0, 7)}</td><td style={{ padding: 12 }}>{b.admission_no}</td><td style={{ padding: 12 }}>{b.student_name}</td><td style={{ padding: 12 }}>{b.class_name}-{b.section} / {b.roll_number}</td><td style={{ padding: 12, textAlign: 'right' }}>{money(b.total_amount)}</td><td style={{ padding: 12, textAlign: 'right' }}>{money(b.total_received)}</td><td style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>{money(b.balance_due)}</td><td style={{ padding: 12 }}><span style={styles.typeBadge}>{b.status}</span></td></tr>)}
+          <div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Bill No', 'Month (BS/AD)', 'Reg No', 'Student', 'Class/Section', 'Billed', 'Received', 'Balance', 'Status'].map(h => <th key={h} style={{ padding: 12, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>
+            {bills.filter(b => !selectedBillFilterMonth || String(b.fee_month).slice(0, 7) === selectedBillFilterMonth).map(b => <tr key={b.id}><td style={{ padding: 12, fontWeight: 600 }}>{b.bill_number}</td><td style={{ padding: 12 }}><strong>{toBS(String(b.fee_month).slice(0, 10)) || '—'}</strong><small style={{ display: 'block', color: '#64748b' }}>{String(b.fee_month).slice(0, 7)} (AD)</small></td><td style={{ padding: 12 }}>{(b.reg_no || b.admission_no)}</td><td style={{ padding: 12 }}>{b.student_name}</td><td style={{ padding: 12 }}>{b.class_name}-{b.section} / {b.roll_number}</td><td style={{ padding: 12, textAlign: 'right' }}>{money(b.total_amount)}</td><td style={{ padding: 12, textAlign: 'right' }}>{money(b.total_received)}</td><td style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>{money(b.balance_due)}</td><td style={{ padding: 12 }}><span style={styles.typeBadge}>{b.status}</span></td></tr>)}
             {!bills.length && <tr><td colSpan="9" style={styles.emptyCell}>Bill बनाएको छैन।</td></tr>}
           </tbody></table></div>
         </section>
@@ -2029,8 +2391,8 @@ function StudentFees({ accounts, onRefreshAccounts }) {
           <form onSubmit={createReceipt}>
             <div style={styles.formGrid}>
               <label style={styles.label}>Receipt Number (auto)<input style={{ ...styles.input, background: '#f8fafc', fontWeight: 700 }} value={receiptNumberPreview} readOnly /></label>
-              {selectField('Due Bill *', receiptBillId, value => { setReceiptBillId(value); const found = bills.find(b => String(b.id) === String(value)); setReceiptAmount(found ? String(found.balance_due) : ''); }, outstandingBills.map(b => ({ value: String(b.id), label: `${b.bill_number} · ${b.student_name} · ${b.admission_no} · Due ${money(b.balance_due)}` })), 'बाँकी bill छान्नुहोस्')}
-              {textField('Receipt Date *', receiptDate, setReceiptDate, { required: true, type: 'date' })}
+              {selectField('Due Bill *', receiptBillId, value => { setReceiptBillId(value); const found = bills.find(b => String(b.id) === String(value)); setReceiptAmount(found ? String(found.balance_due) : ''); }, outstandingBills.map(b => ({ value: String(b.id), label: `${b.bill_number} · ${b.student_name} · ${(b.reg_no || b.admission_no)} · Due ${money(b.balance_due)}` })), 'बाँकी bill छान्नुहोस्')}
+              <div><label style={styles.label}>Receipt Date (AD) / रसिद मिति *<input style={styles.input} value={receiptDate} onChange={e => setReceiptDate(e.target.value)} required type="date" /></label><small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>नेपाली मिति (BS): {receiptDate ? toBS(receiptDate) : '—'}</small></div>
               {selectField('Payment Mode *', paymentMethod, setPaymentMethod, [{ value: 'cash', label: 'Cash / नगद' }, { value: 'bank', label: 'Bank / बैंक' }])}
               {selectField('Cash / Bank Ledger *', paymentAccountId, setPaymentAccountId, displayedPaymentAccounts.map(a => ({ value: String(a.id), label: `${a.code} - ${a.name}` })), displayedPaymentAccounts.length ? 'Cash/Bank Ledger छान्नुहोस्' : 'पहिले Asset Ledger बनाउनुहोस्')}
               {textField('Received Amount (Rs.) *', receiptAmount, setReceiptAmount, { required: true, type: 'number', min: '0.01', max: selectedBill?.balance_due ?? undefined, step: '0.01' })}
@@ -2050,12 +2412,12 @@ function StudentFees({ accounts, onRefreshAccounts }) {
         <section style={styles.panel}>
           {panelHeader('Student Fee Ledger', 'एक विद्यार्थीको सबै bills, receipts, received amount र बाँकी रकम एकै ठाउँमा।')}
           <div style={{ ...styles.formGrid, alignItems: 'end' }}>
-            {selectField('विद्यार्थी छान्नुहोस्', ledgerStudentId, setLedgerStudentId, students.map(s => ({ value: String(s.id), label: `${s.admission_no} · ${s.student_name} · ${s.class_name}-${s.section} / ${s.roll_number}` })), 'विद्यार्थी छान्नुहोस्')}
+            {selectField('विद्यार्थी छान्नुहोस्', ledgerStudentId, setLedgerStudentId, students.map(s => ({ value: String(s.id), label: `${(s.reg_no || s.admission_no)} · ${s.student_name} · ${s.class_name}-${s.section} / ${s.roll_number}` })), 'विद्यार्थी छान्नुहोस्')}
             <div style={{ paddingBottom: 16 }}><button type="button" style={styles.primaryButton} onClick={() => loadStudentLedger()} disabled={!ledgerStudentId || loading}><Search size={15} /> Ledger हेर्नुहोस्</button></div>
           </div>
           {ledger && <>
             <div style={styles.metricsGrid}>
-              <Metric title="Total Billed / जम्मा बिल" value={money(ledger.totals.billed)} note={`${ledger.student.admission_no} · ${ledger.student.student_name}`} icon={<FileText size={19} />} color="#4f46e5" bg="#eef2ff" />
+              <Metric title="Total Billed / जम्मा बिल" value={money(ledger.totals.billed)} note={`${(ledger.student.reg_no || ledger.student.admission_no)} · ${ledger.student.student_name}`} icon={<FileText size={19} />} color="#4f46e5" bg="#eef2ff" />
               <Metric title="Total Received / जम्मा प्राप्त" value={money(ledger.totals.received)} note="Receipt बाट accounting posting" icon={<Wallet size={19} />} color="#059669" bg="#d1fae5" />
               <Metric title="Balance Due / बाँकी" value={money(ledger.totals.balance)} note={`${ledger.student.class_name}-${ledger.student.section} · Roll ${ledger.student.roll_number}`} icon={<AlertCircle size={19} />} color="#d97706" bg="#fef3c7" />
             </div>
@@ -2070,7 +2432,7 @@ function StudentFees({ accounts, onRefreshAccounts }) {
       {tab === 'Receipt Register' && <section style={styles.panel}>
         {panelHeader('Saved Fee Receipts', `${receipts.length} receipts`, <button type="button" style={styles.secondaryButton} onClick={reloadAll} disabled={loading}><RefreshCw size={15} /> Refresh</button>)}
         <div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Receipt No.', 'Date (BS/AD)', 'Student', 'Class/Section', 'Bill No.', 'Mode', 'Paid To', 'Amount', 'Print'].map(h => <th key={h} style={{ padding: 12, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>
-          {receipts.map(r => <tr key={r.id}><td style={{ padding: 12, fontWeight: 700 }}>{r.receipt_number}</td><td style={{ padding: 12 }}><strong>{toBS(formatDateAD(r.receipt_date))}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(r.receipt_date)}</small></td><td style={{ padding: 12 }}>{r.student_name}<small style={{ display: 'block', color: '#64748b' }}>{r.admission_no}</small></td><td style={{ padding: 12 }}>{r.class_name}-{r.section} / {r.roll_number}</td><td style={{ padding: 12 }}>{r.bill_number}</td><td style={{ padding: 12 }}>{String(r.payment_method).toUpperCase()}</td><td style={{ padding: 12 }}>{r.payment_account_name}</td><td style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>{money(r.total_amount)}</td><td style={{ padding: 12 }}><button type="button" style={styles.secondaryButton} onClick={() => printStudentReceipt(r)}><Printer size={15} /> Print</button></td></tr>)}
+          {receipts.map(r => <tr key={r.id}><td style={{ padding: 12, fontWeight: 700 }}>{r.receipt_number}</td><td style={{ padding: 12 }}><strong>{toBS(formatDateAD(r.receipt_date))}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(r.receipt_date)}</small></td><td style={{ padding: 12 }}>{r.student_name}<small style={{ display: 'block', color: '#64748b' }}>{(r.reg_no || r.admission_no)}</small></td><td style={{ padding: 12 }}>{r.class_name}-{r.section} / {r.roll_number}</td><td style={{ padding: 12 }}>{r.bill_number}</td><td style={{ padding: 12 }}>{String(r.payment_method).toUpperCase()}</td><td style={{ padding: 12 }}>{r.payment_account_name}</td><td style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>{money(r.total_amount)}</td><td style={{ padding: 12 }}><button type="button" style={styles.secondaryButton} onClick={() => printStudentReceipt(r)}><Printer size={15} /> Print</button></td></tr>)}
           {!receipts.length && <tr><td colSpan="9" style={styles.emptyCell}>अहिलेसम्म Receipt काटिएको छैन।</td></tr>}
         </tbody></table></div>
       </section>}
