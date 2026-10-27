@@ -10,8 +10,7 @@ import {
 } from 'lucide-react';
 
 const API_BASE_URL = 'https://school-accounting-software.onrender.com';
-const ORGANIZATION_ID = 1;
-
+const ORGANIZATION_ID = 1;// DBeaver मा सही ID पुष्टि भएपछि मात्र राख्नुहोस्
 const navigation = [
   { title: 'मुख्य पृष्ठ' },
   { label: 'Dashboard', icon: LayoutDashboard },
@@ -485,18 +484,17 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          organizationId: ORGANIZATION_ID,
-          entryDate,
-          voucherNumber,
-          description: description.trim(),
-          lines: validRows.map(r => ({
-            accountId: Number(r.accountId),
-            debit: Number(r.debit) || 0,
-            credit: Number(r.credit) || 0
-          }))
-        })
-      });
-
+  organizationId: ORGANIZATION_ID,
+  financialYearId: FINANCIAL_YEAR_ID,
+  entryDate,
+  voucherNumber,
+  description: description.trim(),
+  lines: validRows.map(r => ({
+    accountId: Number(r.accountId),
+    debit: Number(r.debit) || 0,
+    credit: Number(r.credit) || 0
+  }))
+})  }))
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
