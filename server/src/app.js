@@ -8,8 +8,16 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 4000;
 
+// Allow local frontend ports and the configured production frontend
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  process.env.CLIENT_ORIGIN
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173'
+  origin: allowedOrigins
 }));
 
 app.use(express.json({ limit: '1mb' }));
