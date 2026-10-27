@@ -1,208 +1,5 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import { pool } from './db.js';
 
-dotenv.config();
-
-const app = express();
-const port = process.env.PORT || 4000;
-
-// Allow local frontend ports and the configured production frontend
-const allowedOrigins = [
-
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:5175',
-  'https://school-accounting-frontend.onrender.com',
-  'https://amarbartaula.com.np',
-  'https://www.amarbartaula.com.np',
-  process.env.CLIENT_ORIGIN
-].filter(Boolean);
-
-app.use(cors({
-  origin: allowedOrigins
-}));
-
-app.use(express.json({ limit: '1mb' }));
-
-// Validate organization ID
-function isValidOrganizationId(value) {
-  return /^\d+$/.test(String(value ?? '')) &&
-    Number.isSafeInteger(Number(value)) &&
-    Number(value) > 0;
-}
-
-// Validate optional date filters
-function isValidDate(value) {
-  if (!value) return true;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-
-  const date = new Date(`${value}T00:00:00.000Z`);
-
-  return !Number.isNaN(date.getTime()) &&
-    date.toISOString().slice(0, 10) === value;
-}
-
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({
-    ok: true,
-    app: 'Accounting Software API'
-  });
-});
-
-// Database check
-app.get('/api/db-check', async (_req, res) => {
-  try {
-    const result = await pool.query('SELECT NOW() AS database_time');
-
-    res.json({
-      ok: true,
-      message: 'Database connected successfully',
-      databaseTime: result.rows[0].database_time
-    });
-  } catch (err) {
-    console.error(err.message);
-
-    res.status(500).json({
-      ok: false,
-      message: 'Database connection failed'
-    });
-  }
-});
-
-// List schools and businesses
-app.get('/api/organizations', async (_req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, name, module_type
-       FROM organizations
-       ORDER BY id`
-    );
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err.message);
-
-    res.status(500).json({
-      message: 'Could not load organizations'
-    });
-  }
-});
-
-// List accounts
-app.get('/api/accounts', async (req, res) => {
-  try {
-    const { organizationId } = req.query;
-
-    if (!isValidOrganizationId(organizationId)) {
-      return res.status(400).json({
-        message: 'Valid organizationId is required'
-      });
-    }
-
-    const result = await pool.query(
-      `SELECT
-         id,
-         organization_id,
-         code AS account_code,
-         name AS account_name,
-         account_type,
-         parent_id,
-         is_active
-       FROM accounts
-       WHERE organization_id = $1
-       ORDER BY code`,
-      [Number(organizationId)]
-    );
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err.message);
-
-    res.status(500).json({
-      message: 'Could not load accounts'
-    });
-  }
-});
-
-// Create an account
-app.post('/api/accounts', async (req, res) => {
-  try {
-    const {
-      organizationId,
-      accountCode,
-      accountName,
-      accountType
-    } = req.body;
-
-    const allowedTypes = [
-      'asset',
-      'liability',
-      'equity',
-      'income',
-      'expense'
-    ];
-
-    if (
-      !isValidOrganizationId(organizationId) ||
-      typeof accountCode !== 'string' ||
-      !accountCode.trim() ||
-      typeof accountName !== 'string' ||
-      !accountName.trim() ||
-      typeof accountType !== 'string' ||
-      !allowedTypes.includes(accountType.toLowerCase())
-    ) {
-      return res.status(400).json({
-        message:
-          'Valid organization, account code, account name and account type are required'
-      });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO accounts
-         (organization_id, code, name, account_type)
-       VALUES ($1, $2, $3, $4)
-       RETURNING
-         id,
-         organization_id,
-         code AS account_code,
-         name AS account_name,
-         account_type,
-         parent_id,
-         is_active`,
-      [
-        Number(organizationId),
-        accountCode.trim(),
-        accountName.trim(),
-        accountType.toLowerCase()
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    if (err.code === '23505') {
-      return res.status(409).json({
-        message: 'This account code already exists for this organization'
-      });
-    }
-
-    if (err.code === '23503') {
-      return res.status(400).json({
-        message: 'Organization not found'
-      });
-    }
-
-    console.error(err.message);
-
-    res.status(500).json({
-      message: 'Could not create account'
-    });
-  }
-});
-
-// Create and post a balanced journal voucher
+ // Create and post a balanced journal voucher with automatic voucher number
 app.post('/api/journal-entries', async (req, res) => {
   const {
     organizationId,
@@ -220,8 +17,7 @@ app.post('/api/journal-entries', async (req, res) => {
     lines.length < 2
   ) {
     return res.status(400).json({
-      message:
-        'Organization, description and at least two lines are required'
+      message: 'Organization, description and at least two lines are required'
     });
   }
 
@@ -231,11 +27,9 @@ app.post('/api/journal-entries', async (req, res) => {
     });
   }
 
-  if (
-    voucherNumber != null &&
-    (typeof voucherNumber !== 'string' ||
-      voucherNumber.length > 50)
-  ) {
+  // Voucher number is generated automatically.
+  // Do not accept a user-supplied number here.
+  if (voucherNumber != null && typeof voucherNumber !== 'string') {
     return res.status(400).json({
       message: 'Invalid voucherNumber'
     });
@@ -246,9 +40,9 @@ app.post('/api/journal-entries', async (req, res) => {
   const accountIds = [];
 
   for (const line of lines) {
-    const accountId = Number(line.accountId);
-    const debit = Number(line.debit ?? 0);
-    const credit = Number(line.credit ?? 0);
+    const accountId = Number(line?.accountId);
+    const debit = Number(line?.debit ?? 0);
+    const credit = Number(line?.credit ?? 0);
 
     if (
       !Number.isSafeInteger(accountId) ||
@@ -264,8 +58,7 @@ app.post('/api/journal-entries', async (req, res) => {
       !Number.isInteger(credit * 100)
     ) {
       return res.status(400).json({
-        message:
-          'Each line needs a valid account and either debit or credit, with amounts to two decimal places'
+        message: 'Each line needs a valid account and either debit or credit, with amounts to two decimal places'
       });
     }
 
@@ -286,20 +79,16 @@ app.post('/api/journal-entries', async (req, res) => {
 
   try {
     client = await pool.connect();
-
     await client.query('BEGIN');
 
-    const organization = await client.query(
+    const org = await client.query(
       'SELECT id FROM organizations WHERE id = $1',
       [Number(organizationId)]
     );
 
-    if (organization.rowCount === 0) {
+    if (org.rowCount === 0) {
       await client.query('ROLLBACK');
-
-      return res.status(400).json({
-        message: 'Organization not found'
-      });
+      return res.status(400).json({ message: 'Organization not found' });
     }
 
     const uniqueAccountIds = [...new Set(accountIds)];
@@ -316,27 +105,38 @@ app.post('/api/journal-entries', async (req, res) => {
 
     if (accounts.rowCount !== uniqueAccountIds.length) {
       await client.query('ROLLBACK');
-
       return res.status(400).json({
-        message:
-          'An account is invalid, inactive or belongs to another organization'
+        message: 'An account is invalid, inactive or belongs to another organization'
       });
     }
 
-    const entryResult = await client.query(
+    const date = entryDate || new Date().toISOString().slice(0, 10);
+
+    // First create the entry so the database gives it a unique ID.
+    const inserted = await client.query(
       `INSERT INTO journal_entries
          (organization_id, entry_date, voucher_number, description, status)
-       VALUES ($1, $2, $3, $4, 'posted')
+       VALUES ($1, $2, NULL, $3, 'posted')
        RETURNING *`,
-      [
-        Number(organizationId),
-        entryDate || new Date().toISOString().slice(0, 10),
-        voucherNumber?.trim() || null,
-        description.trim()
-      ]
+      [Number(organizationId), date, description.trim()]
     );
 
-    const entry = entryResult.rows[0];
+    const initialEntry = inserted.rows[0];
+
+    // Example: JV-20261027-000123
+    const datePart = date.replace(/-/g, '');
+    const generatedVoucherNumber =
+      `JV-${datePart}-${String(initialEntry.id).padStart(6, '0')}`;
+
+    const updated = await client.query(
+      `UPDATE journal_entries
+       SET voucher_number = $1
+       WHERE id = $2
+       RETURNING *`,
+      [generatedVoucherNumber, initialEntry.id]
+    );
+
+    const entry = updated.rows[0];
 
     for (const line of lines) {
       await client.query(
@@ -356,8 +156,9 @@ app.post('/api/journal-entries', async (req, res) => {
 
     return res.status(201).json({
       ok: true,
-      message: 'Journal entry posted successfully',
+      message: 'Journal entry and voucher created successfully',
       entry,
+      voucherNumber: generatedVoucherNumber,
       totalDebit: totalDebit / 100,
       totalCredit: totalCredit / 100
     });
@@ -366,11 +167,12 @@ app.post('/api/journal-entries', async (req, res) => {
       try {
         await client.query('ROLLBACK');
       } catch (rollbackErr) {
-        console.error('Rollback failed:', rollbackErr.message);
+        console.error('Rollback failed:', rollbackErr);
       }
     }
 
-    console.error(err.message);
+    // Log the real database error for diagnosis in Render.
+    console.error('Journal entry save failed:', err);
 
     return res.status(500).json({
       message: 'Could not save journal entry'
@@ -378,140 +180,4 @@ app.post('/api/journal-entries', async (req, res) => {
   } finally {
     client?.release();
   }
-});
-
-// Journal register
-app.get('/api/journal-entries', async (req, res) => {
-  try {
-    const { organizationId, from, to } = req.query;
-
-    if (!isValidOrganizationId(organizationId)) {
-      return res.status(400).json({
-        message: 'Valid organizationId is required'
-      });
-    }
-
-    if (
-      !isValidDate(from) ||
-      !isValidDate(to) ||
-      (from && to && from > to)
-    ) {
-      return res.status(400).json({
-        message: 'Valid date range is required'
-      });
-    }
-
-    const result = await pool.query(
-      `SELECT
-         j.id,
-         j.organization_id,
-         j.entry_date,
-         j.voucher_number,
-         j.description,
-         j.status,
-         j.created_at,
-         COALESCE(SUM(l.debit), 0)::numeric(14,2) AS total_debit,
-         COALESCE(SUM(l.credit), 0)::numeric(14,2) AS total_credit
-       FROM journal_entries j
-       LEFT JOIN journal_lines l
-         ON l.journal_entry_id = j.id
-       WHERE j.organization_id = $1
-         AND ($2::date IS NULL OR j.entry_date >= $2::date)
-         AND ($3::date IS NULL OR j.entry_date <= $3::date)
-       GROUP BY j.id
-       ORDER BY j.entry_date DESC, j.id DESC`,
-      [Number(organizationId), from || null, to || null]
-    );
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err.message);
-
-    res.status(500).json({
-      message: 'Could not load journal register'
-    });
-  }
-});
-
-// Trial Balance: posted entries only
-app.get('/api/reports/trial-balance', async (req, res) => {
-  try {
-    const { organizationId, from, to } = req.query;
-
-    if (!isValidOrganizationId(organizationId)) {
-      return res.status(400).json({
-        message: 'Valid organizationId is required'
-      });
-    }
-
-    if (
-      !isValidDate(from) ||
-      !isValidDate(to) ||
-      (from && to && from > to)
-    ) {
-      return res.status(400).json({
-        message: 'Valid date range is required'
-      });
-    }
-
-    const result = await pool.query(
-      `WITH account_totals AS (
-         SELECT
-           l.account_id,
-           SUM(l.debit) AS total_debit,
-           SUM(l.credit) AS total_credit
-         FROM journal_lines l
-         INNER JOIN journal_entries j
-           ON j.id = l.journal_entry_id
-         WHERE j.organization_id = $1
-           AND j.status = 'posted'
-           AND ($2::date IS NULL OR j.entry_date >= $2::date)
-           AND ($3::date IS NULL OR j.entry_date <= $3::date)
-         GROUP BY l.account_id
-       )
-       SELECT
-         a.id AS account_id,
-         a.code AS account_code,
-         a.name AS account_name,
-         a.account_type,
-         COALESCE(t.total_debit, 0)::numeric(14,2) AS total_debit,
-         COALESCE(t.total_credit, 0)::numeric(14,2) AS total_credit
-       FROM accounts a
-       LEFT JOIN account_totals t
-         ON t.account_id = a.id
-       WHERE a.organization_id = $1
-         AND a.is_active = TRUE
-       ORDER BY a.code`,
-      [Number(organizationId), from || null, to || null]
-    );
-
-    const totals = result.rows.reduce(
-      (sum, row) => {
-        sum.debit += Number(row.total_debit);
-        sum.credit += Number(row.total_credit);
-        return sum;
-      },
-      { debit: 0, credit: 0 }
-    );
-
-    res.json({
-      organizationId: Number(organizationId),
-      accounts: result.rows,
-      totals: {
-        debit: Number(totals.debit.toFixed(2)),
-        credit: Number(totals.credit.toFixed(2))
-      }
-    });
-  } catch (err) {
-    console.error(err.message);
-
-    res.status(500).json({
-      message: 'Could not generate trial balance'
-    });
-  }
-});
-
-// Start server
-app.listen(port, () => {
-  console.log(`Accounting API listening at http://localhost:${port}`);
 });
