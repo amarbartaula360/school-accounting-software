@@ -372,28 +372,26 @@ app.post('/api/journal-entries', async (req, res) => {
     const voucherType = 'journal';
     // Save journal header, including all required columns
     const entryResult = await client.query(
-      `INSERT INTO journal_entries
-         (
-           organization_id,
-           financial_year_id,
-           voucher_number,
-           voucher_type,
-           entry_date,
-           description,
-           status
-         )
-       VALUES ($1, $2, $3, $4, $5, $6, 'posted')
-       RETURNING *`,
-      [
-        Number(organizationId),
-        financialYearId,
-        actualVoucherNumber,
-        voucherType,
-        actualEntryDate,
-        description.trim()
-      ]
-    );
-
+      ``INSERT INTO journal_entries
+     (
+       organization_id,
+       financial_year_id,
+       voucher_number,
+       voucher_type,
+       entry_date,
+       description,
+       status
+     )
+   VALUES ($1, $2, $3, $4, $5, $6, 'posted')
+   RETURNING *`,
+  [
+    Number(organizationId),
+    financialYearId,
+    actualVoucherNumber,
+    voucherType,
+    actualEntryDate,
+    description.trim()
+  ]
     const entry = entryResult.rows[0];
 
     // Save debit and credit lines
