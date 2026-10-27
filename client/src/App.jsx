@@ -573,7 +573,6 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
           },
           body: JSON.stringify({
             organizationId: ORGANIZATION_ID,
-            financialYearId: FINANCIAL_YEAR_ID,
             entryDate,
             voucherNumber: voucherNumber.trim(),
             description: description.trim(),
@@ -1000,13 +999,10 @@ function ChartOfAccounts({ accounts, loading, error, onReload }) {
 
 function FinancialReports({ accounts }) {
   const [report, setReport] = useState('trial');
-
-  const debitAccounts = accounts.filter(a =>
-    /asset|expense/i.test(a.type)
-  );
-  const creditAccounts = accounts.filter(a =>
-    /liability|equity|capital|income/i.test(a.type)
-  );
+  const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [ledgerRows, setLedgerRows] = useState([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerError, setLedgerError] = useState('');
 
   const income = accounts.filter(a => /income/i.test(a.type));
   const expenses = accounts.filter(a => /expense/i.test(a.type));
@@ -1017,6 +1013,51 @@ function FinancialReports({ accounts }) {
   const totalExpenses = expenses.reduce(
     (sum, a) => sum + Number(a.balance || 0), 0
   );
+
+  useEffect(() => {
+    if (report !== 'ledger' || !selectedAccountId) {
+      setLedgerRows([]);
+      setLedgerError('');
+      setLedgerLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadLedger() {
+      setLedgerLoading(true);
+      setLedgerError('');
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/ledger?organizationId=${ORGANIZATION_ID}&accountId=${encodeURIComponent(selectedAccountId)}`
+        );
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(data.message || 'Ledger load गर्न सकिएन।');
+        }
+        if (!Array.isArray(data)) {
+          throw new Error('Ledger API बाट सही data आएन।');
+        }
+
+        if (!cancelled) setLedgerRows(data);
+      } catch (err) {
+        if (!cancelled) {
+          setLedgerRows([]);
+          setLedgerError(err.message || 'Ledger load गर्दा समस्या आयो।');
+        }
+      } finally {
+        if (!cancelled) setLedgerLoading(false);
+      }
+    }
+
+    loadLedger();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [report, selectedAccountId]);
 
   function printReport() {
     window.print();
@@ -1063,40 +1104,39 @@ function FinancialReports({ accounts }) {
               : 'Account Ledger / खाता बही'}
         </h2>
 
-        <p style={{ color: '#64748b' }}>
-          यो प्रारम्भिक report उपलब्ध account data मा आधारित छ।
-          पूर्ण accounting report का लागि journal entries र opening balances
-          सहित backend बाट ledger balance निकाल्नुपर्छ।
-        </p>
-
         {report === 'trial' && (
-          <div style={styles.tableWrap}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th>Code</th>
-                  <th>Account</th>
-                  <th>Type</th>
-                  <th>Available Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {accounts.map(a => (
-                  <tr key={a.id}>
-                    <td>{a.code}</td>
-                    <td>{a.name}</td>
-                    <td>{a.type}</td>
-                    <td>{money(a.balance)}</td>
+          <>
+            <p style={{ color: '#64748b' }}>
+              हाल यहाँ account मा उपलब्ध balance देखाइएको छ। पूर्ण Trial Balance का लागि posted journal lines बाट balances गणना गर्नुपर्छ।
+            </p>
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Account</th>
+                    <th>Type</th>
+                    <th>Available Balance</th>
                   </tr>
-                ))}
-                {!accounts.length && (
-                  <tr><td colSpan="4" style={styles.emptyCell}>
-                    खाताको data उपलब्ध छैन।
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {accounts.map(a => (
+                    <tr key={a.id}>
+                      <td>{a.code}</td>
+                      <td>{a.name}</td>
+                      <td>{a.type}</td>
+                      <td>{money(a.balance)}</td>
+                    </tr>
+                  ))}
+                  {!accounts.length && (
+                    <tr><td colSpan="4" style={styles.emptyCell}>
+                      खाताको data उपलब्ध छैन।
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
 
         {report === 'income' && (
@@ -1135,12 +1175,89 @@ function FinancialReports({ accounts }) {
 
         {report === 'ledger' && (
           <>
-            <p>
-              Ledger को विस्तृत कारोबारका लागि backend बाट account-wise
-              journal entry API जोड्नुपर्छ। हाल यहाँ खाताको उपलब्ध balance
-              देखाइएको छ।
+            <p style={{ color: '#64748b' }}>
+              Journal Voucher बाट पोस्ट भएका कारोबार हेर्न खाता छान्नुहोस्।
             </p>
-            <ReportAccountTable accounts={accounts} />
+
+            <label style={styles.label}>
+              Account Ledger / खाता बही
+              <select
+                style={styles.input}
+                value={selectedAccountId}
+                onChange={e => setSelectedAccountId(e.target.value)}
+              >
+                <option value="">खाता छान्नुहोस्</option>
+                {accounts.map(account => (
+                  <option key={account.id} value={account.id}>
+                    {account.code} - {account.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {ledgerLoading && <Notice message="Ledger लोड हुँदैछ..." />}
+            {ledgerError && <Notice type="error" message={ledgerError} />}
+
+            {!ledgerLoading && !ledgerError && selectedAccountId && (
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Voucher No.</th>
+                      <th>Description / विवरण</th>
+                      <th>Debit</th>
+                      <th>Credit</th>
+                      <th>Running Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ledgerRows.map((row, index) => {
+                      const balance = Number(row.running_balance) || 0;
+                      return (
+                        <tr key={`${row.journal_entry_id}-${index}`}>
+                          <td>{String(row.entry_date || '').slice(0, 10)}</td>
+                          <td>{row.voucher_number}</td>
+                          <td>{row.description}</td>
+                          <td>{money(Number(row.debit) || 0)}</td>
+                          <td>{money(Number(row.credit) || 0)}</td>
+                          <td>
+                            {money(Math.abs(balance))}
+                            {balance > 0 ? ' Dr' : balance < 0 ? ' Cr' : ''}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {ledgerRows.length === 0 && (
+                      <tr>
+                        <td colSpan="6" style={styles.emptyCell}>
+                          यस खातामा कुनै posted transaction भेटिएन।
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  {ledgerRows.length > 0 && (
+                    <tfoot>
+                      <tr>
+                        <th colSpan="3">Total / जम्मा</th>
+                        <th>{money(ledgerRows.reduce((sum, row) => sum + (Number(row.debit) || 0), 0))}</th>
+                        <th>{money(ledgerRows.reduce((sum, row) => sum + (Number(row.credit) || 0), 0))}</th>
+                        <th>
+                          {(() => {
+                            const finalBalance = Number(ledgerRows[ledgerRows.length - 1].running_balance) || 0;
+                            return `${money(Math.abs(finalBalance))}${finalBalance > 0 ? ' Dr' : finalBalance < 0 ? ' Cr' : ''}`;
+                          })()}
+                        </th>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            )}
+
+            {!selectedAccountId && (
+              <Notice message="Ledger हेर्न माथिबाट एउटा Account छान्नुहोस्।" />
+            )}
           </>
         )}
       </section>
