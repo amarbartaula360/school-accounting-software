@@ -8,7 +8,7 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 4000;
 
-// Allow local frontend ports and configured production frontend
+// Allowed frontend origins
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
@@ -32,7 +32,7 @@ function isValidOrganizationId(value) {
     Number(value) > 0;
 }
 
-// Validate dates in YYYY-MM-DD format
+// Validate date in YYYY-MM-DD format
 function isValidDate(value) {
   if (!value) return true;
 
@@ -184,7 +184,7 @@ app.post('/api/accounts', async (req, res) => {
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    return res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({
@@ -201,7 +201,7 @@ app.post('/api/accounts', async (req, res) => {
 
     console.error('Create account error:', err.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Could not create account'
     });
   }
@@ -231,7 +231,7 @@ app.post('/api/journal-entries', async (req, res) => {
     });
   }
 
-  // Voucher number is required by the database
+  // Voucher number is mandatory
   if (
     typeof voucherNumber !== 'string' ||
     !voucherNumber.trim() ||
@@ -316,7 +316,7 @@ app.post('/api/journal-entries', async (req, res) => {
       });
     }
 
-    // Confirm all selected accounts are active and belong to organization
+    // Confirm accounts are active and belong to organization
     const uniqueAccountIds = [...new Set(accountIds)];
 
     const accounts = await client.query(
@@ -341,7 +341,7 @@ app.post('/api/journal-entries', async (req, res) => {
     const actualEntryDate =
       entryDate || new Date().toISOString().slice(0, 10);
 
-    // Find the open financial year matching the entry date
+    // Find open financial year matching entry date
     const financialYearResult = await client.query(
       `SELECT id
        FROM financial_years
@@ -368,30 +368,33 @@ app.post('/api/journal-entries', async (req, res) => {
 
     const actualVoucherNumber = voucherNumber.trim();
 
-    // Journal voucher type
+    // Must match journal_entries_voucher_type_check
     const voucherType = 'journal';
-    // Save journal header, including all required columns
+
+    // Insert journal header; all required columns are included
     const entryResult = await client.query(
-      ``INSERT INTO journal_entries
-     (
-       organization_id,
-       financial_year_id,
-       voucher_number,
-       voucher_type,
-       entry_date,
-       description,
-       status
-     )
-   VALUES ($1, $2, $3, $4, $5, $6, 'posted')
-   RETURNING *`,
-  [
-    Number(organizationId),
-    financialYearId,
-    actualVoucherNumber,
-    voucherType,
-    actualEntryDate,
-    description.trim()
-  ]
+      `INSERT INTO journal_entries
+         (
+           organization_id,
+           financial_year_id,
+           voucher_number,
+           voucher_type,
+           entry_date,
+           description,
+           status
+         )
+       VALUES ($1, $2, $3, $4, $5, $6, 'posted')
+       RETURNING *`,
+      [
+        Number(organizationId),
+        financialYearId,
+        actualVoucherNumber,
+        voucherType,
+        actualEntryDate,
+        description.trim()
+      ]
+    );
+
     const entry = entryResult.rows[0];
 
     // Save debit and credit lines
@@ -409,7 +412,7 @@ app.post('/api/journal-entries', async (req, res) => {
       );
     }
 
-    // Commit only after header and all lines are saved
+    // Save header and lines together
     await client.query('COMMIT');
 
     return res.status(201).json({
@@ -436,7 +439,7 @@ app.post('/api/journal-entries', async (req, res) => {
     if (err.code === '23503') {
       return res.status(400).json({
         message:
-          'Database reference error. Check the organization, financial year and account IDs.'
+          'Database reference error. Check organization, financial year and account IDs.'
       });
     }
 
@@ -447,9 +450,15 @@ app.post('/api/journal-entries', async (req, res) => {
       });
     }
 
+    if (err.code === '23514') {
+      return res.status(400).json({
+        message:
+          'Database validation failed. Check voucher type and required fields.'
+      });
+    }
+
     return res.status(500).json({
-      message:
-        err.message || 'Could not save journal entry'
+      message: 'Could not save journal entry'
     });
   } finally {
     client?.release();
@@ -509,11 +518,11 @@ app.get('/api/journal-entries', async (req, res) => {
       ]
     );
 
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
     console.error('Journal register error:', err.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Could not load journal register'
     });
   }
@@ -583,7 +592,6 @@ app.get('/api/reports/trial-balance', async (req, res) => {
       (sum, row) => {
         sum.debit += Number(row.total_debit);
         sum.credit += Number(row.total_credit);
-
         return sum;
       },
       {
@@ -592,7 +600,7 @@ app.get('/api/reports/trial-balance', async (req, res) => {
       }
     );
 
-    res.json({
+    return res.json({
       organizationId: Number(organizationId),
       accounts: result.rows,
       totals: {
@@ -603,7 +611,7 @@ app.get('/api/reports/trial-balance', async (req, res) => {
   } catch (err) {
     console.error('Trial balance error:', err.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Could not generate trial balance'
     });
   }
@@ -611,7 +619,5 @@ app.get('/api/reports/trial-balance', async (req, res) => {
 
 // Start server
 app.listen(port, () => {
-  console.log(
-    `Accounting API listening on port ${port}`
-  );
+  console.log(`Accounting API listening on port ${port}`);
 });
