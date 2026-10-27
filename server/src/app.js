@@ -466,6 +466,7 @@ app.post('/api/journal-entries', async (req, res) => {
 });
 
 // Journal register
+// Journal register: list saved vouchers
 app.get('/api/journal-entries', async (req, res) => {
   try {
     const { organizationId, from, to } = req.query;
@@ -497,12 +498,10 @@ app.get('/api/journal-entries', async (req, res) => {
          j.description,
          j.status,
          j.created_at,
-         COALESCE(
-           SUM(l.debit), 0
-         )::numeric(14,2) AS total_debit,
-         COALESCE(
-           SUM(l.credit), 0
-         )::numeric(14,2) AS total_credit
+         COALESCE(SUM(l.debit), 0)::numeric(14,2)
+           AS total_debit,
+         COALESCE(SUM(l.credit), 0)::numeric(14,2)
+           AS total_credit
        FROM journal_entries j
        LEFT JOIN journal_lines l
          ON l.journal_entry_id = j.id
@@ -524,6 +523,76 @@ app.get('/api/journal-entries', async (req, res) => {
 
     return res.status(500).json({
       message: 'Could not load journal register'
+    });
+  }
+});
+
+// General Ledger: show posted journal entries by account
+app.get('/api/ledger', async (req, res) => {
+  try {
+    const { organizationId, accountId } = req.query;
+
+    if (
+      !isValidOrganizationId(organizationId) ||
+      !isValidOrganizationId(accountId)
+    ) {
+      return res.status(400).json({
+        message: 'Valid organizationId and accountId are required'
+      });
+    }
+
+    const result = await pool.query(
+      `WITH account_entries AS (
+         SELECT
+           j.id AS journal_entry_id,
+           j.entry_date,
+           j.voucher_number,
+           j.voucher_type,
+           j.description,
+           a.id AS account_id,
+           a.code AS account_code,
+           a.name AS account_name,
+           a.account_type,
+           SUM(l.debit)::numeric(14,2) AS debit,
+           SUM(l.credit)::numeric(14,2) AS credit
+         FROM journal_lines l
+         INNER JOIN journal_entries j
+           ON j.id = l.journal_entry_id
+         INNER JOIN accounts a
+           ON a.id = l.account_id
+         WHERE j.organization_id = $1
+           AND a.organization_id = $1
+           AND l.account_id = $2
+           AND j.status = 'posted'
+         GROUP BY
+           j.id,
+           j.entry_date,
+           j.voucher_number,
+           j.voucher_type,
+           j.description,
+           a.id,
+           a.code,
+           a.name,
+           a.account_type
+       )
+       SELECT
+         *,
+         SUM(debit - credit) OVER (
+           PARTITION BY account_id
+           ORDER BY entry_date, journal_entry_id
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+         )::numeric(14,2) AS running_balance
+       FROM account_entries
+       ORDER BY entry_date, journal_entry_id`,
+      [Number(organizationId), Number(accountId)]
+    );
+
+    return res.json(result.rows);
+  } catch (err) {
+    console.error('General ledger error:', err.message);
+
+    return res.status(500).json({
+      message: 'Could not load general ledger'
     });
   }
 });
