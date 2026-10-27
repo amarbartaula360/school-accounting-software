@@ -587,6 +587,613 @@ app.get('/api/reports/trial-balance', async (req, res) => {
   }
 });
 
+// ---------------- Student Fees module ----------------
+// Billing is tracked in fee tables; income is recognized only when a receipt is posted.
+// Each saved receipt and its balanced accounting journal entry are committed atomically.
+
+app.get('/api/fee/students', async (req, res) => {
+  try {
+    const { organizationId, search = '' } = req.query;
+    if (!isValidOrganizationId(organizationId)) {
+      return res.status(400).json({ message: 'Valid organizationId is required' });
+    }
+    const result = await pool.query(
+      `SELECT id, organization_id, admission_no, student_name, class_name, section,
+              roll_number, guardian_name, guardian_phone, is_active, created_at
+       FROM public.fee_students
+       WHERE organization_id = $1
+         AND ($2::text = '' OR admission_no ILIKE '%' || $2 || '%'
+              OR student_name ILIKE '%' || $2 || '%'
+              OR class_name ILIKE '%' || $2 || '%'
+              OR section ILIKE '%' || $2 || '%'
+              OR roll_number ILIKE '%' || $2 || '%')
+       ORDER BY class_name, section, roll_number, student_name`,
+      [Number(organizationId), String(search)]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error('Fee students list error:', err.message);
+    if (err.code === '42P01') {
+      return res.status(500).json({ message: 'Student Fee tables are not installed. Run student_fee_module_migration.sql in DBeaver.' });
+    }
+    return res.status(500).json({ message: 'Could not load students' });
+  }
+});
+
+app.post('/api/fee/students', async (req, res) => {
+  try {
+    const {
+      organizationId, admissionNo, studentName, className, section,
+      rollNumber, guardianName = '', guardianPhone = ''
+    } = req.body;
+    if (
+      !isValidOrganizationId(organizationId) ||
+      typeof admissionNo !== 'string' || !admissionNo.trim() ||
+      typeof studentName !== 'string' || !studentName.trim() ||
+      typeof className !== 'string' || !className.trim() ||
+      typeof section !== 'string' || !section.trim() ||
+      (typeof rollNumber !== 'string' && typeof rollNumber !== 'number') ||
+      !String(rollNumber).trim()
+    ) {
+      return res.status(400).json({ message: 'Admission no, student name, class, section and roll number are required.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO public.fee_students
+         (organization_id, admission_no, student_name, class_name, section,
+          roll_number, guardian_name, guardian_phone)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [Number(organizationId), admissionNo.trim(), studentName.trim(), className.trim(),
+       section.trim(), String(rollNumber).trim(), String(guardianName || '').trim() || null,
+       String(guardianPhone || '').trim() || null]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'यो Admission No वा Class/Section/Roll No पहिले नै दर्ता छ।' });
+    }
+    if (err.code === '42P01') {
+      return res.status(500).json({ message: 'Student Fee tables are not installed. Run student_fee_module_migration.sql in DBeaver.' });
+    }
+    console.error('Create fee student error:', err.message);
+    return res.status(500).json({ message: 'Could not save student' });
+  }
+});
+
+app.get('/api/fee/titles', async (req, res) => {
+  try {
+    const { organizationId } = req.query;
+    if (!isValidOrganizationId(organizationId)) {
+      return res.status(400).json({ message: 'Valid organizationId is required' });
+    }
+    const result = await pool.query(
+      `SELECT ft.id, ft.organization_id, ft.title_code, ft.title,
+              ft.income_account_id, a.code AS income_account_code,
+              a.name AS income_account_name, ft.default_amount,
+              ft.is_monthly, ft.is_active, ft.created_at
+       FROM public.fee_titles ft
+       INNER JOIN public.accounts a ON a.id = ft.income_account_id
+       WHERE ft.organization_id = $1
+       ORDER BY ft.is_active DESC, ft.title`,
+      [Number(organizationId)]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error('Fee titles list error:', err.message);
+    if (err.code === '42P01') {
+      return res.status(500).json({ message: 'Student Fee tables are not installed. Run student_fee_module_migration.sql in DBeaver.' });
+    }
+    return res.status(500).json({ message: 'Could not load fee titles' });
+  }
+});
+
+app.post('/api/fee/titles', async (req, res) => {
+  try {
+    const { organizationId, titleCode, title, incomeAccountId, defaultAmount, isMonthly = true } = req.body;
+    const amount = Number(defaultAmount);
+    if (
+      !isValidOrganizationId(organizationId) ||
+      typeof titleCode !== 'string' || !titleCode.trim() ||
+      typeof title !== 'string' || !title.trim() ||
+      !isValidOrganizationId(incomeAccountId) ||
+      !Number.isFinite(amount) || amount < 0 || !validMoney(amount)
+    ) {
+      return res.status(400).json({ message: 'Fee code, fee title, income ledger and valid amount are required.' });
+    }
+    const account = await pool.query(
+      `SELECT id FROM public.accounts
+       WHERE id = $1 AND organization_id = $2
+         AND LOWER(account_type) = 'income'
+         AND COALESCE(is_active, TRUE) = TRUE
+         AND COALESCE(is_group, FALSE) = FALSE`,
+      [Number(incomeAccountId), Number(organizationId)]
+    );
+    if (account.rowCount === 0) {
+      return res.status(400).json({ message: 'Income type को active Ledger account छान्नुहोस्।' });
+    }
+    const result = await pool.query(
+      `INSERT INTO public.fee_titles
+         (organization_id, title_code, title, income_account_id, default_amount, is_monthly)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [Number(organizationId), titleCode.trim(), title.trim(), Number(incomeAccountId), amount, Boolean(isMonthly)]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'यो Fee Code पहिले नै प्रयोग भएको छ।' });
+    }
+    if (err.code === '42P01') {
+      return res.status(500).json({ message: 'Student Fee tables are not installed. Run student_fee_module_migration.sql in DBeaver.' });
+    }
+    console.error('Create fee title error:', err.message);
+    return res.status(500).json({ message: 'Could not save fee title' });
+  }
+});
+
+app.get('/api/fee/bills', async (req, res) => {
+  try {
+    const { organizationId, studentId, month } = req.query;
+    if (!isValidOrganizationId(organizationId)) {
+      return res.status(400).json({ message: 'Valid organizationId is required' });
+    }
+    if (month && !/^\d{4}-\d{2}$/.test(String(month))) {
+      return res.status(400).json({ message: 'month must be YYYY-MM format' });
+    }
+    const result = await pool.query(
+      `WITH received_by_bill AS (
+         SELECT r.bill_id, SUM(r.total_amount)::numeric(14,2) AS total_received
+         FROM public.fee_receipts r
+         WHERE r.organization_id = $1
+         GROUP BY r.bill_id
+       )
+       SELECT b.id, b.organization_id, b.student_id, b.bill_number, b.fee_month,
+              b.bill_date, b.due_date, b.total_amount, b.status, b.created_at,
+              s.admission_no, s.student_name, s.class_name, s.section, s.roll_number,
+              COALESCE(r.total_received, 0)::numeric(14,2) AS total_received,
+              GREATEST(b.total_amount - COALESCE(r.total_received, 0), 0)::numeric(14,2) AS balance_due
+       FROM public.fee_bills b
+       INNER JOIN public.fee_students s ON s.id = b.student_id
+       LEFT JOIN received_by_bill r ON r.bill_id = b.id
+       WHERE b.organization_id = $1
+         AND ($2::bigint IS NULL OR b.student_id = $2::bigint)
+         AND ($3::text IS NULL OR TO_CHAR(b.fee_month, 'YYYY-MM') = $3)
+         AND b.status <> 'cancelled'
+       ORDER BY b.fee_month DESC, s.class_name, s.section, s.roll_number, b.id DESC`,
+      [Number(organizationId), isValidOrganizationId(studentId) ? Number(studentId) : null, month || null]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error('Fee bills list error:', err.message);
+    if (err.code === '42P01') {
+      return res.status(500).json({ message: 'Student Fee tables are not installed. Run student_fee_module_migration.sql in DBeaver.' });
+    }
+    return res.status(500).json({ message: 'Could not load fee bills' });
+  }
+});
+
+app.post('/api/fee/bills', async (req, res) => {
+  const { organizationId, studentId, feeMonth, dueDate = null, items } = req.body;
+  if (
+    !isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId) ||
+    typeof feeMonth !== 'string' || !/^\d{4}-\d{2}-01$/.test(feeMonth) || !isValidDate(feeMonth) ||
+    !isValidDate(dueDate) || !Array.isArray(items) || !items.length
+  ) {
+    return res.status(400).json({ message: 'Student, billing month and at least one fee title with amount are required.' });
+  }
+  const selected = [];
+  const seenTitles = new Set();
+  for (const item of items) {
+    const feeTitleId = Number(item.feeTitleId);
+    const amount = Number(item.amount);
+    if (!isValidOrganizationId(feeTitleId) || !Number.isFinite(amount) || amount <= 0 || !validMoney(amount) || seenTitles.has(feeTitleId)) {
+      return res.status(400).json({ message: 'Each selected fee title must have a unique title and amount greater than zero.' });
+    }
+    seenTitles.add(feeTitleId);
+    selected.push({ feeTitleId, amount });
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1::int, 3)', [Number(organizationId)]);
+
+    const student = await client.query(
+      `SELECT id FROM public.fee_students
+       WHERE id = $1 AND organization_id = $2 AND is_active = TRUE`,
+      [Number(studentId), Number(organizationId)]
+    );
+    if (!student.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'सक्रिय विद्यार्थी भेटिएन।' });
+    }
+
+    const titles = await client.query(
+      `SELECT ft.id, ft.title, ft.income_account_id
+       FROM public.fee_titles ft
+       INNER JOIN public.accounts a ON a.id = ft.income_account_id
+       WHERE ft.organization_id = $1 AND ft.is_active = TRUE
+         AND ft.id = ANY($2::bigint[])
+         AND a.organization_id = $1
+         AND LOWER(a.account_type) = 'income'
+         AND COALESCE(a.is_group, FALSE) = FALSE
+         AND COALESCE(a.is_active, TRUE) = TRUE`,
+      [Number(organizationId), selected.map(x => x.feeTitleId)]
+    );
+    if (titles.rowCount !== selected.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'कुनै Fee Title वा Income Ledger inactive/अमान्य छ।' });
+    }
+
+    const existing = await client.query(
+      `SELECT id FROM public.fee_bills
+       WHERE organization_id = $1 AND student_id = $2 AND fee_month = $3::date`,
+      [Number(organizationId), Number(studentId), feeMonth]
+    );
+    if (existing.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'यो विद्यार्थीका लागि यो महिनाको bill पहिले नै बनाइएको छ।' });
+    }
+
+    const seq = await client.query(
+      `SELECT COALESCE(MAX(SUBSTRING(bill_number FROM '^FB-([0-9]{1,8})$')::integer), 0) + 1 AS next_serial
+       FROM public.fee_bills WHERE organization_id = $1 AND bill_number ~ '^FB-[0-9]{1,8}$'`,
+      [Number(organizationId)]
+    );
+    const billNumber = `FB-${String(seq.rows[0].next_serial).padStart(5, '0')}`;
+    const totalAmount = selected.reduce((sum, item) => sum + Math.round(item.amount * 100), 0) / 100;
+    const billResult = await client.query(
+      `INSERT INTO public.fee_bills
+         (organization_id, student_id, bill_number, fee_month, bill_date, due_date, total_amount, status)
+       VALUES ($1, $2, $3, $4::date, CURRENT_DATE, $5::date, $6, 'unpaid')
+       RETURNING *`,
+      [Number(organizationId), Number(studentId), billNumber, feeMonth, dueDate || null, totalAmount]
+    );
+    const bill = billResult.rows[0];
+    const titleMap = new Map(titles.rows.map(t => [Number(t.id), t]));
+    for (const item of selected) {
+      const title = titleMap.get(item.feeTitleId);
+      await client.query(
+        `INSERT INTO public.fee_bill_lines (bill_id, fee_title_id, income_account_id, title_name, amount)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [bill.id, title.id, title.income_account_id, title.title, item.amount]
+      );
+    }
+    await client.query('COMMIT');
+    return res.status(201).json({ ok: true, bill: { ...bill, total_amount: totalAmount } });
+  } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErr) { console.error('Bill rollback failed:', rollbackErr.message); }
+    }
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'यो महिनाको विद्यार्थी Bill पहिले नै छ।' });
+    }
+    console.error('Create fee bill error:', err.message);
+    return res.status(500).json({ message: 'Could not generate monthly bill' });
+  } finally {
+    client?.release();
+  }
+});
+
+app.get('/api/fee/next-receipt-number', async (req, res) => {
+  try {
+    const { organizationId } = req.query;
+    if (!isValidOrganizationId(organizationId)) {
+      return res.status(400).json({ message: 'Valid organizationId is required' });
+    }
+    const seq = await pool.query(
+      `SELECT COALESCE(MAX(SUBSTRING(receipt_number FROM '^SR-([0-9]{1,8})$')::integer), 0) + 1 AS next_serial
+       FROM public.fee_receipts WHERE organization_id = $1 AND receipt_number ~ '^SR-[0-9]{1,8}$'`,
+      [Number(organizationId)]
+    );
+    return res.json({ receiptNumber: `SR-${String(seq.rows[0].next_serial).padStart(5, '0')}` });
+  } catch (err) {
+    console.error('Next fee receipt number error:', err.message);
+    return res.status(500).json({ message: 'Could not generate receipt preview' });
+  }
+});
+
+app.post('/api/fee/receipts', async (req, res) => {
+  const {
+    organizationId, billId, receiptDate, paymentMethod, paymentAccountId,
+    amount, notes = ''
+  } = req.body;
+  const receiptAmount = Number(amount);
+  if (
+    !isValidOrganizationId(organizationId) || !isValidOrganizationId(billId) ||
+    !isValidOrganizationId(paymentAccountId) || !isValidDate(receiptDate) ||
+    !['cash', 'bank'].includes(String(paymentMethod).toLowerCase()) ||
+    !Number.isFinite(receiptAmount) || receiptAmount <= 0 || !validMoney(receiptAmount)
+  ) {
+    return res.status(400).json({ message: 'Bill, receipt date, Cash/Bank account and valid amount are required.' });
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1::int, 4)', [Number(organizationId)]);
+
+    const billResult = await client.query(
+      `SELECT b.*, s.admission_no, s.student_name, s.class_name, s.section, s.roll_number
+       FROM public.fee_bills b
+       INNER JOIN public.fee_students s ON s.id = b.student_id
+       WHERE b.id = $1 AND b.organization_id = $2 AND s.organization_id = $2
+         AND b.status <> 'cancelled'
+       FOR UPDATE OF b`,
+      [Number(billId), Number(organizationId)]
+    );
+    if (!billResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Fee bill भेटिएन वा cancel भएको छ।' });
+    }
+    const bill = billResult.rows[0];
+
+    const accountResult = await client.query(
+      `SELECT id, code, name FROM public.accounts
+       WHERE id = $1 AND organization_id = $2 AND LOWER(account_type) = 'asset'
+         AND COALESCE(is_group, FALSE) = FALSE AND COALESCE(is_active, TRUE) = TRUE`,
+      [Number(paymentAccountId), Number(organizationId)]
+    );
+    if (!accountResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Cash वा Bank को active Asset Ledger छान्नुहोस्।' });
+    }
+
+    const lineResult = await client.query(
+      `SELECT bl.id AS bill_line_id, bl.title_name, bl.income_account_id, bl.amount::numeric(14,2) AS billed,
+              COALESCE(p.paid, 0)::numeric(14,2) AS paid,
+              ia.name AS income_account_name
+       FROM public.fee_bill_lines bl
+       LEFT JOIN (
+         SELECT bill_line_id, SUM(amount)::numeric(14,2) AS paid
+         FROM public.fee_receipt_lines GROUP BY bill_line_id
+       ) p ON p.bill_line_id = bl.id
+       INNER JOIN public.accounts ia ON ia.id = bl.income_account_id
+       WHERE bl.bill_id = $1
+       ORDER BY bl.id`,
+      [Number(billId)]
+    );
+    if (!lineResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'यो bill मा fee line छैन।' });
+    }
+
+    const billReceivedResult = await client.query(
+      'SELECT COALESCE(SUM(total_amount), 0)::numeric(14,2) AS received FROM public.fee_receipts WHERE bill_id = $1',
+      [Number(billId)]
+    );
+    const previousReceived = Number(billReceivedResult.rows[0].received || 0);
+    const currentBalance = Number((Number(bill.total_amount) - previousReceived).toFixed(2));
+    if (receiptAmount > currentBalance + 0.0001) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: `Receipt amount bill balance भन्दा बढी भयो। बाँकी रकम Rs. ${currentBalance.toFixed(2)} हो।` });
+    }
+
+    const fyDate = receiptDate || new Date().toISOString().slice(0, 10);
+    const fy = await client.query(
+      `SELECT id FROM public.financial_years
+       WHERE organization_id = $1 AND start_date <= $2::date AND end_date >= $2::date
+         AND is_closed = FALSE ORDER BY start_date DESC LIMIT 1`,
+      [Number(organizationId), fyDate]
+    );
+    if (!fy.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Receipt date का लागि खुला आर्थिक वर्ष भेटिएन।' });
+    }
+
+    const seq = await client.query(
+      `SELECT COALESCE(MAX(SUBSTRING(receipt_number FROM '^SR-([0-9]{1,8})$')::integer), 0) + 1 AS next_serial
+       FROM public.fee_receipts WHERE organization_id = $1 AND receipt_number ~ '^SR-[0-9]{1,8}$'`,
+      [Number(organizationId)]
+    );
+    const receiptNumber = `SR-${String(seq.rows[0].next_serial).padStart(5, '0')}`;
+
+    // Allocate the collection across billed items in order so each receipt credits the correct income ledgers.
+    let amountLeftCents = Math.round(receiptAmount * 100);
+    const allocations = [];
+    for (const row of lineResult.rows) {
+      if (amountLeftCents <= 0) break;
+      const lineRemainingCents = Math.max(0, Math.round((Number(row.billed) - Number(row.paid)) * 100));
+      const allocatedCents = Math.min(amountLeftCents, lineRemainingCents);
+      if (allocatedCents > 0) {
+        allocations.push({
+          billLineId: Number(row.bill_line_id),
+          incomeAccountId: Number(row.income_account_id),
+          amount: allocatedCents / 100
+        });
+        amountLeftCents -= allocatedCents;
+      }
+    }
+    if (amountLeftCents > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Bill line बाँकी रकमसँग receipt amount मिलेन।' });
+    }
+
+    const incomeTotals = new Map();
+    for (const allocation of allocations) {
+      incomeTotals.set(
+        allocation.incomeAccountId,
+        Math.round(((incomeTotals.get(allocation.incomeAccountId) || 0) + allocation.amount) * 100) / 100
+      );
+    }
+    const journalLines = [
+      { accountId: Number(paymentAccountId), debit: receiptAmount, credit: 0 },
+      ...Array.from(incomeTotals.entries()).map(([accountId, credit]) => ({ accountId, debit: 0, credit }))
+    ];
+    const creditCents = journalLines.reduce((sum, l) => sum + Math.round(l.credit * 100), 0);
+    if (creditCents !== Math.round(receiptAmount * 100)) {
+      await client.query('ROLLBACK');
+      return res.status(500).json({ message: 'Receipt accounting total does not balance. Nothing was saved.' });
+    }
+
+    const description = `Student fee receipt ${receiptNumber} - ${bill.student_name} (${bill.admission_no})`;
+    const entryResult = await client.query(
+      `INSERT INTO public.journal_entries
+         (organization_id, financial_year_id, entry_date, voucher_number, voucher_type, description, status)
+       VALUES ($1, $2, $3::date, $4, 'receipt', $5, 'posted')
+       RETURNING id, voucher_number, entry_date, voucher_type, description, status`,
+      [Number(organizationId), fy.rows[0].id, fyDate, receiptNumber, description]
+    );
+    const entry = entryResult.rows[0];
+    for (const line of journalLines) {
+      await client.query(
+        `INSERT INTO public.journal_lines (journal_entry_id, account_id, debit, credit)
+         VALUES ($1, $2, $3, $4)`,
+        [entry.id, line.accountId, line.debit, line.credit]
+      );
+    }
+
+    const receiptResult = await client.query(
+      `INSERT INTO public.fee_receipts
+         (organization_id, student_id, bill_id, receipt_number, receipt_date, payment_method,
+          payment_account_id, total_amount, journal_entry_id, notes)
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [Number(organizationId), bill.student_id, Number(billId), receiptNumber, fyDate,
+       String(paymentMethod).toLowerCase(), Number(paymentAccountId), receiptAmount, entry.id,
+       String(notes || '').trim() || null]
+    );
+    const receipt = receiptResult.rows[0];
+    for (const allocation of allocations) {
+      await client.query(
+        `INSERT INTO public.fee_receipt_lines (receipt_id, bill_line_id, amount)
+         VALUES ($1, $2, $3)`,
+        [receipt.id, allocation.billLineId, allocation.amount]
+      );
+    }
+
+    const newTotalReceived = Number((previousReceived + receiptAmount).toFixed(2));
+    const newStatus = newTotalReceived >= Number(bill.total_amount) - 0.005 ? 'paid' : 'partially_paid';
+    await client.query('UPDATE public.fee_bills SET status = $1 WHERE id = $2', [newStatus, Number(billId)]);
+    await client.query('COMMIT');
+
+    return res.status(201).json({
+      ok: true,
+      message: 'Receipt saved and income posted to accounting ledger.',
+      receipt: {
+        ...receipt,
+        journal_entry_id: entry.id,
+        voucher_number: entry.voucher_number,
+        student_name: bill.student_name,
+        admission_no: bill.admission_no,
+        class_name: bill.class_name,
+        section: bill.section,
+        roll_number: bill.roll_number,
+        bill_number: bill.bill_number,
+        payment_account_name: accountResult.rows[0].name,
+        status: newStatus
+      },
+      allocations
+    });
+  } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErr) { console.error('Receipt rollback failed:', rollbackErr.message); }
+    }
+    if (err.code === '23503') {
+      return res.status(400).json({ message: 'Database reference error. Verify the student, bill, account and financial year.' });
+    }
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'Receipt number already used. Refresh and try again.' });
+    }
+    if (err.code === '23514') {
+      return res.status(400).json({ message: 'Receipt or journal entry did not pass a database constraint. Nothing was saved.' });
+    }
+    console.error('Student fee receipt error:', err.message);
+    return res.status(500).json({ message: 'Could not save receipt. No receipt should be assumed issued until success is shown.' });
+  } finally {
+    client?.release();
+  }
+});
+
+app.get('/api/fee/receipts', async (req, res) => {
+  try {
+    const { organizationId, studentId } = req.query;
+    if (!isValidOrganizationId(organizationId)) {
+      return res.status(400).json({ message: 'Valid organizationId is required' });
+    }
+    const result = await pool.query(
+      `SELECT r.id, r.organization_id, r.student_id, r.bill_id, r.receipt_number,
+              r.receipt_date, r.payment_method, r.payment_account_id,
+              pa.name AS payment_account_name, r.total_amount, r.journal_entry_id,
+              r.notes, r.created_at, b.bill_number,
+              s.admission_no, s.student_name, s.class_name, s.section, s.roll_number
+       FROM public.fee_receipts r
+       INNER JOIN public.fee_students s ON s.id = r.student_id
+       INNER JOIN public.fee_bills b ON b.id = r.bill_id
+       INNER JOIN public.accounts pa ON pa.id = r.payment_account_id
+       WHERE r.organization_id = $1
+         AND ($2::bigint IS NULL OR r.student_id = $2::bigint)
+       ORDER BY r.receipt_date DESC, r.id DESC LIMIT 500`,
+      [Number(organizationId), isValidOrganizationId(studentId) ? Number(studentId) : null]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error('Fee receipts list error:', err.message);
+    return res.status(500).json({ message: 'Could not load receipts' });
+  }
+});
+
+app.get('/api/fee/student-ledger', async (req, res) => {
+  try {
+    const { organizationId, studentId } = req.query;
+    if (!isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId)) {
+      return res.status(400).json({ message: 'Valid organizationId and studentId are required' });
+    }
+    const studentResult = await pool.query(
+      `SELECT id, admission_no, student_name, class_name, section, roll_number, guardian_name, guardian_phone
+       FROM public.fee_students WHERE id = $1 AND organization_id = $2`,
+      [Number(studentId), Number(organizationId)]
+    );
+    if (!studentResult.rowCount) return res.status(404).json({ message: 'Student not found' });
+
+    const events = await pool.query(
+      `SELECT entry_date, entry_type, reference, description, billed, received
+       FROM (
+         SELECT b.bill_date AS entry_date, 'BILL'::text AS entry_type, b.bill_number AS reference,
+                'Monthly fee bill - ' || TO_CHAR(b.fee_month, 'YYYY-MM') AS description,
+                b.total_amount::numeric(14,2) AS billed, 0::numeric(14,2) AS received,
+                b.id AS sort_id
+         FROM public.fee_bills b
+         WHERE b.organization_id = $1 AND b.student_id = $2 AND b.status <> 'cancelled'
+         UNION ALL
+         SELECT r.receipt_date AS entry_date, 'RECEIPT'::text AS entry_type, r.receipt_number AS reference,
+                'Fee received (' || UPPER(r.payment_method) || ')' AS description,
+                0::numeric(14,2) AS billed, r.total_amount::numeric(14,2) AS received,
+                r.id AS sort_id
+         FROM public.fee_receipts r
+         WHERE r.organization_id = $1 AND r.student_id = $2
+       ) ledger
+       ORDER BY entry_date, CASE WHEN entry_type = 'BILL' THEN 0 ELSE 1 END, sort_id`,
+      [Number(organizationId), Number(studentId)]
+    );
+    let balanceCents = 0;
+    const rows = events.rows.map(row => {
+      balanceCents += Math.round((Number(row.billed) - Number(row.received)) * 100);
+      return { ...row, running_balance: balanceCents / 100 };
+    });
+    const totals = rows.reduce((sum, row) => {
+      sum.billed += Number(row.billed || 0);
+      sum.received += Number(row.received || 0);
+      return sum;
+    }, { billed: 0, received: 0 });
+    return res.json({
+      student: studentResult.rows[0],
+      rows,
+      totals: {
+        billed: Number(totals.billed.toFixed(2)),
+        received: Number(totals.received.toFixed(2)),
+        balance: Number((totals.billed - totals.received).toFixed(2))
+      }
+    });
+  } catch (err) {
+    console.error('Student fee ledger error:', err.message);
+    return res.status(500).json({ message: 'Could not load student fee ledger' });
+  }
+});
+
+
 app.listen(port, () => {
   console.log(`Accounting API listening on port ${port}`);
 });
