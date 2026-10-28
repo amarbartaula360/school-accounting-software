@@ -1358,6 +1358,125 @@ app.get('/api/fee/receipts', async (req, res) => {
   }
 });
 
+// Fee management dashboard: date-scoped collection, billing, parent contacts and current outstanding.
+app.get('/api/fee/dashboard', async (req, res) => {
+  try {
+    const { organizationId, startDate, endDate, granularity = 'day' } = req.query;
+    if (!isValidOrganizationId(organizationId) || !isValidDate(startDate) || !startDate || !isValidDate(endDate) || !endDate || String(startDate) > String(endDate)) {
+      return res.status(400).json({ message: 'Valid organizationId and startDate/endDate (YYYY-MM-DD) are required; startDate must not exceed endDate.' });
+    }
+    const orgId = Number(organizationId);
+    const groupBy = granularity === 'month' ? 'month' : 'day';
+    const [summaryResult, paymentsResult, trendResult, outstandingResult, classResult] = await Promise.all([
+      pool.query(
+        `WITH paid_by_bill AS (
+           SELECT bill_id, SUM(total_amount)::numeric(14,2) AS received
+           FROM public.fee_receipts WHERE organization_id = $1 GROUP BY bill_id
+         ), balances AS (
+           SELECT b.student_id, b.due_date,
+                  GREATEST(b.total_amount - COALESCE(p.received, 0), 0)::numeric(14,2) AS balance_due
+           FROM public.fee_bills b
+           LEFT JOIN paid_by_bill p ON p.bill_id = b.id
+           WHERE b.organization_id = $1 AND b.status <> 'cancelled'
+         )
+         SELECT
+           (SELECT COUNT(*)::int FROM public.fee_students s WHERE s.organization_id = $1 AND s.is_active = TRUE) AS active_students,
+           (SELECT COUNT(*)::int FROM public.fee_bills b WHERE b.organization_id = $1 AND b.status <> 'cancelled' AND b.bill_date BETWEEN $2::date AND $3::date) AS bills_in_period,
+           (SELECT COALESCE(SUM(b.total_amount), 0)::numeric(14,2) FROM public.fee_bills b WHERE b.organization_id = $1 AND b.status <> 'cancelled' AND b.bill_date BETWEEN $2::date AND $3::date) AS billed_amount,
+           (SELECT COUNT(*)::int FROM public.fee_receipts r WHERE r.organization_id = $1 AND r.receipt_date BETWEEN $2::date AND $3::date) AS receipt_count,
+           (SELECT COALESCE(SUM(r.total_amount), 0)::numeric(14,2) FROM public.fee_receipts r WHERE r.organization_id = $1 AND r.receipt_date BETWEEN $2::date AND $3::date) AS collected_amount,
+           (SELECT COUNT(DISTINCT r.student_id)::int FROM public.fee_receipts r WHERE r.organization_id = $1 AND r.receipt_date BETWEEN $2::date AND $3::date) AS students_paid,
+           (SELECT COUNT(DISTINCT b.student_id)::int FROM balances b WHERE b.balance_due > 0) AS students_with_due,
+           (SELECT COALESCE(SUM(b.balance_due), 0)::numeric(14,2) FROM balances b WHERE b.balance_due > 0) AS outstanding_amount,
+           (SELECT COUNT(DISTINCT b.student_id)::int FROM balances b WHERE b.balance_due > 0 AND b.due_date < CURRENT_DATE) AS overdue_students,
+           (SELECT COALESCE(SUM(b.balance_due), 0)::numeric(14,2) FROM balances b WHERE b.balance_due > 0 AND b.due_date < CURRENT_DATE) AS overdue_amount,
+           (SELECT COALESCE(SUM(r.total_amount), 0)::numeric(14,2) FROM public.fee_receipts r WHERE r.organization_id = $1 AND r.receipt_date BETWEEN $2::date AND $3::date AND r.payment_method = 'cash') AS cash_collected,
+           (SELECT COALESCE(SUM(r.total_amount), 0)::numeric(14,2) FROM public.fee_receipts r WHERE r.organization_id = $1 AND r.receipt_date BETWEEN $2::date AND $3::date AND r.payment_method = 'bank') AS bank_collected`,
+        [orgId, startDate, endDate]
+      ),
+      pool.query(
+        `SELECT r.id, r.organization_id, r.student_id, r.bill_id, r.receipt_number,
+                r.receipt_date, r.payment_method, r.payment_account_id,
+                pa.name AS payment_account_name, r.total_amount, r.journal_entry_id,
+                r.notes, r.created_at, b.bill_number,
+                s.reg_no, s.admission_no, s.student_name, s.class_name, s.section, s.roll_number,
+                s.guardian_name, s.guardian_phone, s.address
+         FROM public.fee_receipts r
+         JOIN public.fee_students s ON s.id = r.student_id
+         JOIN public.fee_bills b ON b.id = r.bill_id
+         JOIN public.accounts pa ON pa.id = r.payment_account_id
+         WHERE r.organization_id = $1 AND r.receipt_date BETWEEN $2::date AND $3::date
+         ORDER BY r.receipt_date DESC, r.id DESC LIMIT 500`,
+        [orgId, startDate, endDate]
+      ),
+      pool.query(
+        `SELECT CASE WHEN $4::text = 'month' THEN TO_CHAR(r.receipt_date, 'YYYY-MM') ELSE TO_CHAR(r.receipt_date, 'YYYY-MM-DD') END AS period_key,
+                COUNT(*)::int AS receipt_count, SUM(r.total_amount)::numeric(14,2) AS amount
+         FROM public.fee_receipts r
+         WHERE r.organization_id = $1 AND r.receipt_date BETWEEN $2::date AND $3::date
+         GROUP BY period_key ORDER BY period_key`,
+        [orgId, startDate, endDate, groupBy]
+      ),
+      pool.query(
+        `WITH paid_by_bill AS (
+           SELECT bill_id, SUM(total_amount)::numeric(14,2) AS received
+           FROM public.fee_receipts WHERE organization_id = $1 GROUP BY bill_id
+         ), due_rows AS (
+           SELECT b.student_id, b.due_date,
+                  GREATEST(b.total_amount - COALESCE(p.received, 0), 0)::numeric(14,2) AS balance_due
+           FROM public.fee_bills b LEFT JOIN paid_by_bill p ON p.bill_id = b.id
+           WHERE b.organization_id = $1 AND b.status <> 'cancelled'
+         )
+         SELECT s.id AS student_id, s.reg_no, s.admission_no, s.student_name, s.class_name, s.section, s.roll_number,
+                s.guardian_name, s.guardian_phone, s.address,
+                SUM(d.balance_due)::numeric(14,2) AS outstanding_amount,
+                COALESCE(SUM(CASE WHEN d.due_date < CURRENT_DATE THEN d.balance_due ELSE 0 END), 0)::numeric(14,2) AS overdue_amount,
+                MIN(d.due_date) FILTER (WHERE d.balance_due > 0) AS oldest_due_date,
+                COUNT(*) FILTER (WHERE d.balance_due > 0)::int AS due_bill_count
+         FROM due_rows d JOIN public.fee_students s ON s.id = d.student_id
+         WHERE s.organization_id = $1
+         GROUP BY s.id, s.reg_no, s.admission_no, s.student_name, s.class_name, s.section, s.roll_number, s.guardian_name, s.guardian_phone, s.address
+         HAVING SUM(d.balance_due) > 0
+         ORDER BY SUM(d.balance_due) DESC, s.class_name, s.student_name LIMIT 200`,
+        [orgId]
+      ),
+      pool.query(
+        `WITH billed AS (
+           SELECT s.class_name, s.section, SUM(b.total_amount)::numeric(14,2) AS billed_amount
+           FROM public.fee_bills b JOIN public.fee_students s ON s.id = b.student_id
+           WHERE b.organization_id = $1 AND s.organization_id = $1 AND b.status <> 'cancelled' AND b.bill_date BETWEEN $2::date AND $3::date
+           GROUP BY s.class_name, s.section
+         ), paid AS (
+           SELECT s.class_name, s.section, SUM(r.total_amount)::numeric(14,2) AS collected_amount, COUNT(*)::int AS receipt_count
+           FROM public.fee_receipts r JOIN public.fee_students s ON s.id = r.student_id
+           WHERE r.organization_id = $1 AND s.organization_id = $1 AND r.receipt_date BETWEEN $2::date AND $3::date
+           GROUP BY s.class_name, s.section
+         )
+         SELECT COALESCE(b.class_name, p.class_name) AS class_name,
+                COALESCE(b.section, p.section) AS section,
+                COALESCE(b.billed_amount, 0)::numeric(14,2) AS billed_amount,
+                COALESCE(p.collected_amount, 0)::numeric(14,2) AS collected_amount,
+                COALESCE(p.receipt_count, 0)::int AS receipt_count
+         FROM billed b FULL OUTER JOIN paid p ON p.class_name = b.class_name AND p.section = b.section
+         ORDER BY collected_amount DESC, class_name, section`,
+        [orgId, startDate, endDate]
+      )
+    ]);
+    return res.json({
+      range: { startDate, endDate, granularity: groupBy },
+      summary: summaryResult.rows[0] || {},
+      payments: paymentsResult.rows,
+      trend: trendResult.rows,
+      outstanding: outstandingResult.rows,
+      classSummary: classResult.rows
+    });
+  } catch (err) {
+    console.error('Fee dashboard error:', err.message);
+    if (err.code === '42P01') return res.status(500).json({ message: 'Student Fee tables are not installed. Run student_fee_module_migration.sql in DBeaver.' });
+    return res.status(500).json({ message: 'Could not load fee management dashboard' });
+  }
+});
+
 app.get('/api/fee/student-ledger', async (req, res) => {
   try {
     const { organizationId, studentId } = req.query;
