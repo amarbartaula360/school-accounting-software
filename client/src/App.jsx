@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import NepaliDate from 'nepali-date-converter';
+import ExaminationModule from './ExaminationModule.jsx';
 import * as XLSX from 'xlsx';
 import {
   LayoutDashboard, BookOpen, ReceiptText, GraduationCap, Utensils,
@@ -22,6 +23,7 @@ const navigation = [
   { title: 'अन्य मोड्युल / Other Modules' },
   { label: 'Cash & Bank', icon: Landmark },
   { label: 'Student Fees', icon: GraduationCap },
+  { label: 'Examination & Marksheet', icon: FileText },
   { label: 'Payroll & Staff', icon: Users },
   { label: 'Hostel & Canteen', icon: Utensils },
   { label: 'Purchases & Inventory', icon: Package },
@@ -2963,12 +2965,17 @@ export default function App() {
             <StudentFees accounts={accounts} onRefreshAccounts={loadAccounts} />
           )}
 
+          {active === 'Examination & Marksheet' && (
+            <ExaminationModule apiBaseUrl={API_BASE_URL} organizationId={ORGANIZATION_ID} user={user} />
+          )}
+
           {![
             'Dashboard',
             'Journal Vouchers',
             'Chart of Accounts',
             'Financial Reports',
-            'Student Fees'
+            'Student Fees',
+            'Examination & Marksheet'
           ].includes(active) && (
             <Placeholder title={active} setActive={setActive} />
           )}

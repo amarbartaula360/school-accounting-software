@@ -1712,6 +1712,811 @@ app.get('/api/fee/student-ledger', async (req, res) => {
 });
 
 
+// ---------------- Examination, marksheet and student progress reports ----------------
+// The module reuses public.fee_students; it never creates duplicate student master data.
+// All official grading ranges and pass rules are administrator-configured. No rules are seeded.
+
+function examModelForGrade(grade) {
+  if (grade <= 5) return 'learning_achievement';
+  if (grade <= 8) return 'subject_assessment';
+  return 'formal_marksheet';
+}
+
+function examEmail(req) {
+  return String(req.get('x-user-email') || '').trim().toLowerCase();
+}
+
+async function examRoleGuard(req, res, next) {
+  try {
+    const email = examEmail(req);
+    const organizationId = req.query.organizationId || req.body?.organizationId || 1;
+    if (!isValidOrganizationId(organizationId)) {
+      return res.status(400).json({ message: 'Valid organizationId is required.' });
+    }
+    if (!email || !email.includes('@')) {
+      return res.status(401).json({ message: 'Sign in to an assigned examination-system account.' });
+    }
+    const roleResult = await pool.query(
+      `SELECT role FROM public.exam_role_assignments
+       WHERE organization_id = $1 AND LOWER(user_email) = $2 AND is_active = TRUE`,
+      [Number(organizationId), email]
+    );
+    if (!roleResult.rowCount) {
+      return res.status(403).json({ message: 'Examination module access छैन। Admin ले तपाईंको email मा role assign गर्नुपर्छ।' });
+    }
+    const role = roleResult.rows[0].role;
+    const path = req.path;
+    let allowed;
+    if (path === '/roles' && req.method !== 'GET') allowed = ['admin'];
+    else if (path === '/report-settings' && req.method !== 'GET') allowed = ['admin'];
+    else if (path === '/roles' && req.method === 'GET') allowed = ['admin', 'principal', 'exam_coordinator', 'teacher'];
+    else if (/\/print-history$/.test(path)) allowed = ['admin', 'principal', 'exam_coordinator', 'teacher'];
+    else if (/\/status$/.test(path)) allowed = ['admin', 'principal', 'exam_coordinator', 'teacher'];
+    else if (/\/(marks|competency-results|progress-reports)$/.test(path)) allowed = ['admin', 'exam_coordinator', 'teacher'];
+    else if (req.method === 'GET') allowed = ['admin', 'principal', 'exam_coordinator', 'teacher'];
+    else allowed = ['admin', 'exam_coordinator'];
+    if (!allowed.includes(role)) {
+      return res.status(403).json({ message: `यो कार्यका लागि अनुमति छैन। Assigned role: ${role}` });
+    }
+    req.examActor = { email, role, organizationId: Number(organizationId) };
+    return next();
+  } catch (err) {
+    console.error('Exam role guard error:', err.message);
+    if (err.code === '42P01') {
+      return res.status(500).json({ message: 'Examination tables छैनन्। पहिले database/examination_module_migration.sql चलाउनुहोस्।' });
+    }
+    return res.status(500).json({ message: 'Could not verify examination access.' });
+  }
+}
+
+async function writeExamHistory(client, { organizationId, examId = null, studentId = null, actor, action, oldValue = null, newValue = null, note = null }) {
+  await client.query(
+    `INSERT INTO public.exam_result_history
+       (organization_id, exam_id, student_id, actor_email, actor_role, action, old_value, new_value, note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)`,
+    [organizationId, examId, studentId, actor?.email || null, actor?.role || null, action,
+      oldValue == null ? null : JSON.stringify(oldValue), newValue == null ? null : JSON.stringify(newValue), note]
+  );
+}
+
+async function fetchExamDetails(organizationId, examId) {
+  const examResult = await pool.query(
+    `SELECT e.*, ay.year_name
+     FROM public.exam_exams e
+     JOIN public.exam_academic_years ay ON ay.id = e.academic_year_id
+     WHERE e.id = $1 AND e.organization_id = $2`,
+    [examId, organizationId]
+  );
+  if (!examResult.rowCount) return null;
+  const exam = examResult.rows[0];
+  const [subjectResult, componentResult, rosterResult, marksResult, competencyResult, progressResult, gradingResult, policyResult, levelResult, scheduleResult, attendanceResult] = await Promise.all([
+    pool.query(
+      `SELECT ees.*, s.subject_code, s.name_en AS subject_name_en, s.name_ne AS subject_name_ne, s.is_practical
+       FROM public.exam_exam_subjects ees
+       JOIN public.exam_subjects s ON s.id = ees.subject_id
+       WHERE ees.exam_id = $1 AND ees.organization_id = $2
+       ORDER BY ees.display_order, s.name_en`, [examId, organizationId]),
+    pool.query(
+      `SELECT c.*, ees.subject_id
+       FROM public.exam_assessment_components c
+       JOIN public.exam_exam_subjects ees ON ees.id = c.exam_subject_id
+       WHERE ees.exam_id = $1 AND c.organization_id = $2
+       ORDER BY c.display_order, c.id`, [examId, organizationId]),
+    pool.query(
+      `SELECT id, organization_id, reg_no, admission_no, student_name, class_name, section, roll_number,
+              guardian_name, guardian_phone, dob_bs, gender, address, photo_url
+       FROM public.fee_students
+       WHERE organization_id = $1 AND is_active = TRUE AND class_name = $2
+         AND ($3::text IS NULL OR section = $3)
+       ORDER BY CASE WHEN roll_number ~ '^[0-9]+$' THEN roll_number::int END NULLS LAST, roll_number, student_name`,
+      [organizationId, exam.class_name, exam.section || null]),
+    pool.query(
+      `SELECT m.*, c.exam_subject_id, c.component_code, c.name_en AS component_name_en, c.name_ne AS component_name_ne,
+              c.component_type, c.max_marks, ees.subject_id
+       FROM public.exam_marks m
+       JOIN public.exam_assessment_components c ON c.id = m.component_id
+       JOIN public.exam_exam_subjects ees ON ees.id = c.exam_subject_id
+       WHERE ees.exam_id = $1 AND m.organization_id = $2`, [examId, organizationId]),
+    pool.query(
+      `SELECT cr.*, s.name_en AS subject_name_en, s.name_ne AS subject_name_ne,
+              c.competency_code, c.description_en AS competency_en, c.description_ne AS competency_ne,
+              al.level_code, al.name_en AS level_name_en, al.name_ne AS level_name_ne
+       FROM public.exam_competency_results cr
+       JOIN public.exam_subjects s ON s.id = cr.subject_id
+       JOIN public.exam_competencies c ON c.id = cr.competency_id
+       LEFT JOIN public.exam_achievement_levels al ON al.id = cr.achievement_level_id
+       WHERE cr.exam_id = $1 AND cr.organization_id = $2`, [examId, organizationId]),
+    pool.query(
+      `SELECT * FROM public.exam_progress_reports WHERE exam_id = $1 AND organization_id = $2`, [examId, organizationId]),
+    pool.query(
+      `SELECT * FROM public.exam_grading_rules
+       WHERE organization_id = $1 AND grade = $2 AND is_active = TRUE
+         AND (academic_year_id = $3 OR academic_year_id IS NULL)
+       ORDER BY CASE WHEN academic_year_id = $3 THEN 0 ELSE 1 END, min_percentage`, [organizationId, exam.grade, exam.academic_year_id]),
+    pool.query(
+      `SELECT * FROM public.exam_grading_policies
+       WHERE organization_id = $1 AND grade = $2
+         AND (academic_year_id = $3 OR academic_year_id IS NULL)
+       ORDER BY academic_year_id NULLS LAST LIMIT 1`, [organizationId, exam.grade, exam.academic_year_id]),
+    pool.query(
+      `SELECT * FROM public.exam_achievement_levels
+       WHERE organization_id = $1 AND grade = $2 AND is_active = TRUE
+       ORDER BY display_order, name_en`, [organizationId, exam.grade]),
+    pool.query(
+      `SELECT sch.*, ees.subject_id, s.name_en AS subject_name_en, s.name_ne AS subject_name_ne
+       FROM public.exam_assessment_schedule sch
+       JOIN public.exam_exam_subjects ees ON ees.id=sch.exam_subject_id
+       JOIN public.exam_subjects s ON s.id=ees.subject_id
+       WHERE sch.exam_id=$1 AND sch.organization_id=$2 ORDER BY sch.exam_date, sch.start_time`, [examId, organizationId]),
+    pool.query(
+      `SELECT a.student_id,
+              COUNT(*) FILTER (WHERE a.status='present')::int AS present_count,
+              COUNT(*) FILTER (WHERE a.status='absent')::int AS absent_count,
+              COUNT(*) FILTER (WHERE a.status='late')::int AS late_count,
+              COUNT(*) FILTER (WHERE a.status='leave')::int AS leave_count,
+              COUNT(*)::int AS recorded_days
+       FROM public.fee_student_attendance a
+       JOIN public.fee_students st ON st.id=a.student_id AND st.organization_id=a.organization_id
+       JOIN public.exam_academic_years ay ON ay.id=$2 AND ay.organization_id=$1
+       WHERE a.organization_id=$1 AND st.is_active=TRUE AND st.class_name=$3
+         AND ($4::text IS NULL OR st.section=$4)
+         AND a.attendance_date BETWEEN ay.start_date AND ay.end_date
+       GROUP BY a.student_id`, [organizationId, exam.academic_year_id, exam.class_name, exam.section || null])
+  ]);
+  return {
+    exam,
+    subjects: subjectResult.rows,
+    components: componentResult.rows,
+    students: rosterResult.rows,
+    marks: marksResult.rows,
+    competencyResults: competencyResult.rows,
+    progressReports: progressResult.rows,
+    gradingRules: gradingResult.rows,
+    gradingPolicy: policyResult.rows[0] || null,
+    achievementLevels: levelResult.rows,
+    schedule: scheduleResult.rows,
+    attendanceSummary: attendanceResult.rows
+  };
+}
+
+app.use('/api/exams', examRoleGuard);
+
+app.get('/api/exams/summary', async (req, res) => {
+  try {
+    const orgId = req.examActor.organizationId;
+    const [exams, studentCount, yearCount, rulesCount] = await Promise.all([
+      pool.query(`SELECT status, COUNT(*)::int AS count FROM public.exam_exams WHERE organization_id=$1 GROUP BY status`, [orgId]),
+      pool.query(`SELECT COUNT(*)::int AS count FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND NULLIF(regexp_replace(class_name, '[^0-9]', '', 'g'),'')::int BETWEEN 4 AND 10`, [orgId]),
+      pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_academic_years WHERE organization_id=$1`, [orgId]),
+      pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE AND is_verified=TRUE`, [orgId])
+    ]);
+    const byStatus = Object.fromEntries(exams.rows.map(r => [r.status, Number(r.count)]));
+    res.json({ exams: byStatus, activeStudents: Number(studentCount.rows[0]?.count || 0), academicYears: Number(yearCount.rows[0]?.count || 0), verifiedGradingRules: Number(rulesCount.rows[0]?.count || 0) });
+  } catch (err) { console.error('Exam summary error:', err.message); res.status(500).json({ message: 'Could not load examination dashboard.' }); }
+});
+
+app.get('/api/exams/academic-years', async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM public.exam_academic_years WHERE organization_id=$1 ORDER BY start_date DESC, id DESC`, [req.examActor.organizationId]);
+    res.json(result.rows);
+  } catch (err) { console.error('Exam years list error:', err.message); res.status(500).json({ message: 'Could not load academic years.' }); }
+});
+
+app.post('/api/exams/academic-years', async (req, res) => {
+  try {
+    const { yearName, startDate, endDate } = req.body || {};
+    if (!String(yearName || '').trim() || !isValidDate(startDate) || !isValidDate(endDate) || !startDate || !endDate || endDate < startDate) return res.status(400).json({ message: 'Year name and valid start/end dates are required.' });
+    const result = await pool.query(
+      `INSERT INTO public.exam_academic_years (organization_id, year_name, start_date, end_date, created_by_email)
+       VALUES ($1,$2,$3::date,$4::date,$5) RETURNING *`,
+      [req.examActor.organizationId, String(yearName).trim(), startDate, endDate, req.examActor.email]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ message: 'यो academic year पहिले नै छ।' });
+    console.error('Exam year create error:', err.message); res.status(500).json({ message: 'Could not create academic year.' });
+  }
+});
+
+app.put('/api/exams/academic-years/:yearId/activate', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const orgId = req.examActor.organizationId, yearId = Number(req.params.yearId);
+    if (!isValidOrganizationId(yearId)) return res.status(400).json({ message: 'Valid academic year ID required.' });
+    await client.query('BEGIN');
+    const check = await client.query('SELECT * FROM public.exam_academic_years WHERE id=$1 AND organization_id=$2 FOR UPDATE', [yearId, orgId]);
+    if (!check.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Academic year not found.' }); }
+    await client.query('UPDATE public.exam_academic_years SET is_active=FALSE, updated_at=NOW() WHERE organization_id=$1', [orgId]);
+    const updated = await client.query('UPDATE public.exam_academic_years SET is_active=TRUE, updated_at=NOW() WHERE id=$1 AND organization_id=$2 RETURNING *', [yearId, orgId]);
+    await client.query('COMMIT'); res.json(updated.rows[0]);
+  } catch (err) { await client.query('ROLLBACK').catch(() => {}); console.error('Activate year error:', err.message); res.status(500).json({ message: 'Could not activate academic year.' }); }
+  finally { client.release(); }
+});
+
+app.get('/api/exams/subjects', async (req, res) => {
+  try {
+    const orgId = req.examActor.organizationId;
+    const grade = req.query.grade ? Number(req.query.grade) : null;
+    const result = await pool.query(
+      `SELECT * FROM public.exam_subjects WHERE organization_id=$1 AND is_active=TRUE
+       AND ($2::smallint IS NULL OR grade=$2) ORDER BY grade, name_en`, [orgId, grade]);
+    res.json(result.rows);
+  } catch (err) { console.error('Exam subjects list error:', err.message); res.status(500).json({ message: 'Could not load exam subjects.' }); }
+});
+
+app.post('/api/exams/subjects', async (req, res) => {
+  try {
+    const { grade, subjectCode, nameEn, nameNe, isPractical = false } = req.body || {};
+    const gradeNum = Number(grade);
+    if (!Number.isInteger(gradeNum) || gradeNum < 4 || gradeNum > 10 || !String(subjectCode || '').trim() || !String(nameEn || '').trim() || !String(nameNe || '').trim()) return res.status(400).json({ message: 'Grade 4–10, subject code and both subject names are required.' });
+    const result = await pool.query(
+      `INSERT INTO public.exam_subjects (organization_id, grade, subject_code, name_en, name_ne, is_practical)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [req.examActor.organizationId, gradeNum, String(subjectCode).trim(), String(nameEn).trim(), String(nameNe).trim(), Boolean(isPractical)]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { if (err.code === '23505') return res.status(409).json({ message: 'यो subject code पहिले नै दर्ता छ।' }); console.error('Exam subject create error:', err.message); res.status(500).json({ message: 'Could not create subject.' }); }
+});
+
+app.get('/api/exams/competencies', async (req, res) => {
+  try {
+    const grade = req.query.grade ? Number(req.query.grade) : null;
+    const subjectId = req.query.subjectId ? Number(req.query.subjectId) : null;
+    const result = await pool.query(
+      `SELECT c.*, s.name_en AS subject_name_en, s.name_ne AS subject_name_ne
+       FROM public.exam_competencies c JOIN public.exam_subjects s ON s.id=c.subject_id
+       WHERE c.organization_id=$1 AND c.is_active=TRUE AND ($2::smallint IS NULL OR c.grade=$2)
+         AND ($3::bigint IS NULL OR c.subject_id=$3) ORDER BY c.grade, s.name_en, c.competency_code`,
+      [req.examActor.organizationId, grade, subjectId]);
+    res.json(result.rows);
+  } catch (err) { console.error('Exam competencies list error:', err.message); res.status(500).json({ message: 'Could not load competencies.' }); }
+});
+
+app.post('/api/exams/competencies', async (req, res) => {
+  try {
+    const { grade, subjectId, competencyCode, descriptionEn, descriptionNe, sourceGuideline = '', sourceReference = '' } = req.body || {};
+    const g = Number(grade), sid = Number(subjectId);
+    if (!Number.isInteger(g) || g < 4 || g > 10 || !isValidOrganizationId(sid) || !String(competencyCode || '').trim() || !String(descriptionEn || '').trim() || !String(descriptionNe || '').trim()) return res.status(400).json({ message: 'Grade, subject, competency code and English/Nepali descriptions are required.' });
+    const subject = await pool.query('SELECT id FROM public.exam_subjects WHERE id=$1 AND organization_id=$2 AND grade=$3 AND is_active=TRUE', [sid, req.examActor.organizationId, g]);
+    if (!subject.rowCount) return res.status(400).json({ message: 'Subject does not match selected grade.' });
+    const result = await pool.query(
+      `INSERT INTO public.exam_competencies (organization_id, grade, subject_id, competency_code, description_en, description_ne, source_guideline, source_reference, created_by_email)
+       VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''),$9) RETURNING *`,
+      [req.examActor.organizationId, g, sid, String(competencyCode).trim(), String(descriptionEn).trim(), String(descriptionNe).trim(), String(sourceGuideline).trim(), String(sourceReference).trim(), req.examActor.email]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { if (err.code === '23505') return res.status(409).json({ message: 'यो competency code पहिले नै छ।' }); console.error('Create competency error:', err.message); res.status(500).json({ message: 'Could not create competency.' }); }
+});
+
+app.get('/api/exams/achievement-levels', async (req, res) => {
+  try {
+    const grade = req.query.grade ? Number(req.query.grade) : null;
+    const result = await pool.query(`SELECT * FROM public.exam_achievement_levels WHERE organization_id=$1 AND is_active=TRUE AND ($2::smallint IS NULL OR grade=$2) ORDER BY grade, display_order, name_en`, [req.examActor.organizationId, grade]);
+    res.json(result.rows);
+  } catch (err) { console.error('Achievement levels list error:', err.message); res.status(500).json({ message: 'Could not load achievement levels.' }); }
+});
+
+app.post('/api/exams/achievement-levels', async (req, res) => {
+  try {
+    const { grade, levelCode, nameEn, nameNe, descriptionEn = '', descriptionNe = '', sourceGuideline = '', isOfficiallyVerified = false, displayOrder = 1 } = req.body || {};
+    const g = Number(grade);
+    if (!Number.isInteger(g) || g < 4 || g > 10 || !String(levelCode || '').trim() || !String(nameEn || '').trim() || !String(nameNe || '').trim()) return res.status(400).json({ message: 'Grade and both achievement-level names are required.' });
+    if (isOfficiallyVerified && !String(sourceGuideline).trim()) return res.status(400).json({ message: 'Verified official level requires a source guideline.' });
+    const result = await pool.query(
+      `INSERT INTO public.exam_achievement_levels (organization_id, grade, level_code, name_en, name_ne, description_en, description_ne, source_guideline, is_officially_verified, display_order)
+       VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9,$10) RETURNING *`,
+      [req.examActor.organizationId, g, String(levelCode).trim(), String(nameEn).trim(), String(nameNe).trim(), String(descriptionEn), String(descriptionNe), String(sourceGuideline).trim(), Boolean(isOfficiallyVerified), Number(displayOrder) || 1]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { if (err.code === '23505') return res.status(409).json({ message: 'यो achievement level code पहिले नै छ।' }); console.error('Achievement level create error:', err.message); res.status(500).json({ message: 'Could not create achievement level.' }); }
+});
+
+app.get('/api/exams/grading-rules', async (req, res) => {
+  try {
+    const grade = req.query.grade ? Number(req.query.grade) : null;
+    const yearId = req.query.academicYearId ? Number(req.query.academicYearId) : null;
+    const result = await pool.query(
+      `SELECT * FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE
+       AND ($2::smallint IS NULL OR grade=$2) AND ($3::bigint IS NULL OR academic_year_id=$3 OR academic_year_id IS NULL)
+       ORDER BY grade, academic_year_id NULLS LAST, min_percentage`, [req.examActor.organizationId, grade, yearId]);
+    res.json(result.rows);
+  } catch (err) { console.error('Grading rules list error:', err.message); res.status(500).json({ message: 'Could not load grading rules.' }); }
+});
+
+app.post('/api/exams/grading-rules', async (req, res) => {
+  try {
+    const { grade, academicYearId = null, minPercentage, maxPercentage, letterGrade, gradePoint = null, descriptionEn = '', descriptionNe = '', sourceGuideline, sourceClause = '', isVerified = false } = req.body || {};
+    const g = Number(grade), min = Number(minPercentage), max = Number(maxPercentage);
+    if (!Number.isInteger(g) || g < 4 || g > 10 || !Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max > 100 || max < min || !String(letterGrade || '').trim() || !String(sourceGuideline || '').trim()) return res.status(400).json({ message: 'Grade, valid percentage band, grade label and official/source guideline are required.' });
+    if (academicYearId) {
+      if (!isValidOrganizationId(Number(academicYearId))) return res.status(400).json({ message: 'Valid academic year required.' });
+      const yearCheck = await pool.query('SELECT id FROM public.exam_academic_years WHERE id=$1 AND organization_id=$2', [Number(academicYearId), req.examActor.organizationId]);
+      if (!yearCheck.rowCount) return res.status(400).json({ message: 'Academic year does not belong to this organization.' });
+    }
+    if (gradePoint !== null && gradePoint !== '' && (!Number.isFinite(Number(gradePoint)) || Number(gradePoint) < 0)) return res.status(400).json({ message: 'Grade point must be a non-negative number or blank.' });
+    const overlap = await pool.query(
+      `SELECT id, letter_grade FROM public.exam_grading_rules
+       WHERE organization_id=$1 AND grade=$2 AND is_active=TRUE AND academic_year_id IS NOT DISTINCT FROM $3::bigint
+         AND NOT ($5::numeric < min_percentage OR $4::numeric > max_percentage)`,
+      [req.examActor.organizationId, g, academicYearId ? Number(academicYearId) : null, min, max]);
+    if (overlap.rowCount) return res.status(409).json({ message: `यो percentage band पहिलेको ${overlap.rows[0].letter_grade} rule सँग overlap हुन्छ।` });
+    if (isVerified && !String(sourceClause || '').trim()) return res.status(400).json({ message: 'Verified rule का लागि source clause/section पनि राख्नुहोस्।' });
+    const result = await pool.query(
+      `INSERT INTO public.exam_grading_rules (organization_id, academic_year_id, grade, min_percentage, max_percentage, letter_grade, grade_point, description_en, description_ne, source_guideline, source_clause, is_verified, created_by_email)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),NULLIF($9,''),$10,NULLIF($11,''),$12,$13) RETURNING *`,
+      [req.examActor.organizationId, academicYearId ? Number(academicYearId) : null, g, min, max, String(letterGrade).trim(), gradePoint === null || gradePoint === '' ? null : Number(gradePoint), String(descriptionEn), String(descriptionNe), String(sourceGuideline).trim(), String(sourceClause).trim(), Boolean(isVerified), req.examActor.email]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { if (err.code === '23505') return res.status(409).json({ message: 'यो grade rule पहिले नै छ।' }); console.error('Create grading rule error:', err.message); res.status(500).json({ message: 'Could not save grading rule.' }); }
+});
+
+async function deactivateExamConfiguration(req, res, tableName, idParam, actionName) {
+  if (!['admin', 'exam_coordinator'].includes(req.examActor.role)) return res.status(403).json({ message: 'Admin or exam coordinator role required.' });
+  const allowedTables = new Set(['exam_subjects', 'exam_competencies', 'exam_achievement_levels', 'exam_grading_rules']);
+  if (!allowedTables.has(tableName)) return res.status(400).json({ message: 'Unsupported configuration type.' });
+  const id = Number(req.params[idParam]);
+  if (!isValidOrganizationId(id)) return res.status(400).json({ message: 'Valid configuration ID required.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const prior = await client.query(`SELECT * FROM public.${tableName} WHERE id=$1 AND organization_id=$2 FOR UPDATE`, [id, req.examActor.organizationId]);
+    if (!prior.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Configuration record not found.' }); }
+    const updated = await client.query(`UPDATE public.${tableName} SET is_active=FALSE WHERE id=$1 AND organization_id=$2 RETURNING *`, [id, req.examActor.organizationId]);
+    await client.query(`INSERT INTO public.exam_result_history (organization_id, actor_email, actor_role, action, old_value, new_value) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb)`, [req.examActor.organizationId, req.examActor.email, req.examActor.role, actionName, JSON.stringify(prior.rows[0]), JSON.stringify(updated.rows[0])]);
+    await client.query('COMMIT');
+    res.json(updated.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(`Deactivate ${tableName} error:`, err.message);
+    res.status(500).json({ message: 'Could not deactivate configuration. No changes were committed.' });
+  } finally { client.release(); }
+}
+
+app.put('/api/exams/subjects/:subjectId/deactivate', (req, res) => deactivateExamConfiguration(req, res, 'exam_subjects', 'subjectId', 'subject_deactivated'));
+app.put('/api/exams/competencies/:competencyId/deactivate', (req, res) => deactivateExamConfiguration(req, res, 'exam_competencies', 'competencyId', 'competency_deactivated'));
+app.put('/api/exams/achievement-levels/:levelId/deactivate', (req, res) => deactivateExamConfiguration(req, res, 'exam_achievement_levels', 'levelId', 'achievement_level_deactivated'));
+app.put('/api/exams/grading-rules/:ruleId/deactivate', (req, res) => deactivateExamConfiguration(req, res, 'exam_grading_rules', 'ruleId', 'grading_rule_deactivated'));
+
+app.get('/api/exams/grading-policies', async (req, res) => {
+  try {
+    const grade = req.query.grade ? Number(req.query.grade) : null;
+    const yearId = req.query.academicYearId ? Number(req.query.academicYearId) : null;
+    const result = await pool.query(
+      `SELECT * FROM public.exam_grading_policies WHERE organization_id=$1
+       AND ($2::smallint IS NULL OR grade=$2) AND ($3::bigint IS NULL OR academic_year_id=$3 OR academic_year_id IS NULL)
+       ORDER BY grade, academic_year_id NULLS LAST`, [req.examActor.organizationId, grade, yearId]);
+    res.json(result.rows);
+  } catch (err) { console.error('Grading policies list error:', err.message); res.status(500).json({ message: 'Could not load grading policies.' }); }
+});
+
+app.put('/api/exams/grading-policies', async (req, res) => {
+  try {
+    const { grade, academicYearId = null, gpaMethod = 'not_configured', gpaMax = null, overallPassRule = '', promotionRule = '', sourceGuideline = '', sourceClause = '', isVerified = false } = req.body || {};
+    const g = Number(grade), allowedMethods = ['not_configured','arithmetic_mean','weighted_by_credit','configured_other'];
+    const yearId = academicYearId ? Number(academicYearId) : null;
+    const maxGpa = gpaMax === null || gpaMax === '' ? null : Number(gpaMax);
+    if (!Number.isInteger(g) || g < 4 || g > 10 || !allowedMethods.includes(gpaMethod)) return res.status(400).json({ message: 'Valid grade and GPA method required.' });
+    if (maxGpa !== null && (!Number.isFinite(maxGpa) || maxGpa <= 0)) return res.status(400).json({ message: 'Maximum GPA must be a positive number.' });
+    if (gpaMethod !== 'not_configured' && (maxGpa === null || !String(sourceGuideline).trim() || !String(sourceClause).trim())) return res.status(400).json({ message: 'GPA method प्रयोग गर्न maximum GPA र source reference/clause पूरा गर्नुहोस्।' });
+    if (isVerified && (!String(sourceGuideline).trim() || !String(sourceClause).trim())) return res.status(400).json({ message: 'Verified grading policy requires official source and clause.' });
+    if (yearId !== null) {
+      if (!isValidOrganizationId(yearId)) return res.status(400).json({ message: 'Valid academic year required.' });
+      const yearCheck = await pool.query('SELECT id FROM public.exam_academic_years WHERE id=$1 AND organization_id=$2', [yearId, req.examActor.organizationId]);
+      if (!yearCheck.rowCount) return res.status(400).json({ message: 'Academic year does not belong to this organization.' });
+    }
+    const values = [gpaMethod, maxGpa, String(overallPassRule), String(promotionRule), String(sourceGuideline), String(sourceClause), Boolean(isVerified), req.examActor.email];
+    let result;
+    if (yearId !== null) {
+      result = await pool.query(
+        `INSERT INTO public.exam_grading_policies (organization_id, academic_year_id, grade, gpa_method, gpa_max, overall_pass_rule, promotion_rule, source_guideline, source_clause, is_verified, updated_by_email, updated_at)
+         VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,$11,NOW())
+         ON CONFLICT (organization_id, academic_year_id, grade) DO UPDATE SET gpa_method=EXCLUDED.gpa_method, gpa_max=EXCLUDED.gpa_max, overall_pass_rule=EXCLUDED.overall_pass_rule, promotion_rule=EXCLUDED.promotion_rule, source_guideline=EXCLUDED.source_guideline, source_clause=EXCLUDED.source_clause, is_verified=EXCLUDED.is_verified, updated_by_email=EXCLUDED.updated_by_email, updated_at=NOW()
+         RETURNING *`, [req.examActor.organizationId, yearId, g, ...values.slice(0, 8)]);
+    } else {
+      const prior = await pool.query('SELECT id FROM public.exam_grading_policies WHERE organization_id=$1 AND academic_year_id IS NULL AND grade=$2 ORDER BY id LIMIT 1', [req.examActor.organizationId, g]);
+      if (prior.rowCount) {
+        result = await pool.query(
+          `UPDATE public.exam_grading_policies SET gpa_method=$1, gpa_max=$2, overall_pass_rule=NULLIF($3,''), promotion_rule=NULLIF($4,''), source_guideline=NULLIF($5,''), source_clause=NULLIF($6,''), is_verified=$7, updated_by_email=$8, updated_at=NOW() WHERE id=$9 RETURNING *`, [...values, prior.rows[0].id]);
+      } else {
+        result = await pool.query(
+          `INSERT INTO public.exam_grading_policies (organization_id, academic_year_id, grade, gpa_method, gpa_max, overall_pass_rule, promotion_rule, source_guideline, source_clause, is_verified, updated_by_email, updated_at)
+           VALUES ($1,NULL,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9,$10,NOW()) RETURNING *`,
+          [req.examActor.organizationId, g, ...values]);
+      }
+    }
+    res.json(result.rows[0]);
+  } catch (err) { console.error('Grading policy save error:', err.message); res.status(500).json({ message: 'Could not save grading policy.' }); }
+});
+
+app.get('/api/exams', async (req, res) => {
+  try {
+    const grade = req.query.grade ? Number(req.query.grade) : null;
+    const result = await pool.query(
+      `SELECT e.*, ay.year_name FROM public.exam_exams e
+       JOIN public.exam_academic_years ay ON ay.id=e.academic_year_id
+       WHERE e.organization_id=$1 AND ($2::smallint IS NULL OR e.grade=$2)
+       ORDER BY e.created_at DESC, e.id DESC`, [req.examActor.organizationId, grade]);
+    res.json(result.rows);
+  } catch (err) { console.error('Exam list error:', err.message); res.status(500).json({ message: 'Could not load exams.' }); }
+});
+
+app.post('/api/exams', async (req, res) => {
+  try {
+    const { academicYearId, grade, className, section = '', examNameEn, examNameNe, examType = 'terminal', examDate = null, examDateBs = '' } = req.body || {};
+    const g = Number(grade), yearId = Number(academicYearId), orgId = req.examActor.organizationId;
+    if (!isValidOrganizationId(yearId) || !Number.isInteger(g) || g < 4 || g > 10 || !String(className || '').trim() || !String(examNameEn || '').trim() || !String(examNameNe || '').trim() || !['terminal','unit','annual','final','practical','other'].includes(examType) || (examDate && !isValidDate(examDate))) return res.status(400).json({ message: 'Academic year, grade, existing class, exam names and valid date/type are required.' });
+    const model = examModelForGrade(g);
+    const yearCheck = await pool.query('SELECT id FROM public.exam_academic_years WHERE id=$1 AND organization_id=$2', [yearId, orgId]);
+    if (!yearCheck.rowCount) return res.status(400).json({ message: 'Academic year not found.' });
+    const students = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND class_name=$2 AND ($3::text='' OR section=$3)`,
+      [orgId, String(className).trim(), String(section).trim()]);
+    if (!students.rows[0]?.n) return res.status(400).json({ message: 'यो class/section मा active student भेटिएन। Existing student records बाट class/section छान्नुहोस्।' });
+    const result = await pool.query(
+      `INSERT INTO public.exam_exams (organization_id, academic_year_id, grade, class_name, section, exam_name_en, exam_name_ne, exam_type, assessment_model, exam_date, exam_date_bs, created_by_email)
+       VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9,$10::date,NULLIF($11,''),$12) RETURNING *`,
+      [orgId, yearId, g, String(className).trim(), String(section).trim(), String(examNameEn).trim(), String(examNameNe).trim(), examType, model, examDate || null, String(examDateBs).trim(), req.examActor.email]);
+    await pool.query(`INSERT INTO public.exam_result_history (organization_id, exam_id, actor_email, actor_role, action, new_value) VALUES ($1,$2,$3,$4,'exam_created',$5::jsonb)`, [orgId, result.rows[0].id, req.examActor.email, req.examActor.role, JSON.stringify(result.rows[0])]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { console.error('Create exam error:', err.message); res.status(500).json({ message: 'Could not create examination.' }); }
+});
+
+app.post('/api/exams/:examId/subjects', async (req, res) => {
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
+    const { subjectId, fullMarks = null, passMarks = null, creditHours = null, displayOrder = 1 } = req.body || {};
+    if (!isValidOrganizationId(examId) || !isValidOrganizationId(subjectId)) return res.status(400).json({ message: 'Valid exam and subject required.' });
+    const exam = await pool.query('SELECT grade,status FROM public.exam_exams WHERE id=$1 AND organization_id=$2', [examId, orgId]);
+    if (!exam.rowCount) return res.status(404).json({ message: 'Exam not found.' });
+    if (!['draft','in_review'].includes(exam.rows[0].status)) return res.status(409).json({ message: 'Approved/locked/published exam cannot be modified.' });
+    const subj = await pool.query('SELECT id FROM public.exam_subjects WHERE id=$1 AND organization_id=$2 AND grade=$3 AND is_active=TRUE', [Number(subjectId), orgId, exam.rows[0].grade]);
+    if (!subj.rowCount) return res.status(400).json({ message: 'Subject must be active and match the exam grade.' });
+    const full = fullMarks === null || fullMarks === '' ? null : Number(fullMarks), pass = passMarks === null || passMarks === '' ? null : Number(passMarks), credits = creditHours === null || creditHours === '' ? null : Number(creditHours);
+    if ((full !== null && (!validMoney(full) || full <= 0)) || (pass !== null && (!validMoney(pass) || pass < 0 || (full !== null && pass > full))) || (credits !== null && (!Number.isFinite(credits) || credits <= 0))) return res.status(400).json({ message: 'Full marks, pass marks or credit hours are invalid.' });
+    const result = await pool.query(
+      `INSERT INTO public.exam_exam_subjects (organization_id, exam_id, subject_id, full_marks, pass_marks, credit_hours, display_order) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [orgId, examId, Number(subjectId), full, pass, credits, Number(displayOrder) || 1]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { if (err.code === '23505') return res.status(409).json({ message: 'यो subject exam मा पहिल्यै छ।' }); console.error('Exam subject setup error:', err.message); res.status(500).json({ message: 'Could not configure exam subject.' }); }
+});
+
+app.post('/api/exams/:examId/subjects/:examSubjectId/components', async (req, res) => {
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId), examSubjectId = Number(req.params.examSubjectId);
+    const { componentCode, nameEn, nameNe, componentType = 'other', maxMarks = null, passMarks = null, displayOrder = 1 } = req.body || {};
+    const types = ['written','internal','practical','project','continuous','presentation','portfolio','oral','other'];
+    if (!isValidOrganizationId(examId) || !isValidOrganizationId(examSubjectId) || !String(componentCode || '').trim() || !String(nameEn || '').trim() || !String(nameNe || '').trim() || !types.includes(componentType)) return res.status(400).json({ message: 'Component code, bilingual name and valid component type are required.' });
+    const link = await pool.query(`SELECT e.status, ees.full_marks FROM public.exam_exams e JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id WHERE e.id=$1 AND ees.id=$2 AND e.organization_id=$3`, [examId, examSubjectId, orgId]);
+    if (!link.rowCount) return res.status(404).json({ message: 'Exam subject not found.' });
+    if (!['draft','in_review'].includes(link.rows[0].status)) return res.status(409).json({ message: 'Approved/locked/published exam cannot be modified.' });
+    const max = maxMarks === null || maxMarks === '' ? null : Number(maxMarks);
+    const pass = passMarks === null || passMarks === '' ? null : Number(passMarks);
+    if (max !== null && (!validMoney(max) || max <= 0)) return res.status(400).json({ message: 'Maximum marks must be a positive amount or blank for descriptive assessment.' });
+    if (pass !== null && (!validMoney(pass) || pass < 0 || max === null || pass > max)) return res.status(400).json({ message: 'Component pass marks must be non-negative and not exceed a configured maximum.' });
+    if (max !== null && link.rows[0].full_marks !== null) {
+      const total = await pool.query('SELECT COALESCE(SUM(max_marks),0) AS n FROM public.exam_assessment_components WHERE exam_subject_id=$1', [examSubjectId]);
+      if (Number(total.rows[0].n) + max > Number(link.rows[0].full_marks) + 0.001) return res.status(400).json({ message: 'Component maximum total exceeds configured subject full marks.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO public.exam_assessment_components (organization_id, exam_subject_id, component_code, name_en, name_ne, component_type, max_marks, pass_marks, display_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [orgId, examSubjectId, String(componentCode).trim(), String(nameEn).trim(), String(nameNe).trim(), componentType, max, pass, Number(displayOrder) || 1]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { if (err.code === '23505') return res.status(409).json({ message: 'यो component code पहिले नै छ।' }); console.error('Component setup error:', err.message); res.status(500).json({ message: 'Could not save component.' }); }
+});
+
+app.get('/api/exams/:examId/details', async (req, res) => {
+  try {
+    const id = Number(req.params.examId);
+    if (!isValidOrganizationId(id)) return res.status(400).json({ message: 'Valid exam ID required.' });
+    const details = await fetchExamDetails(req.examActor.organizationId, id);
+    if (!details) return res.status(404).json({ message: 'Exam not found.' });
+    res.json(details);
+  } catch (err) { console.error('Exam details error:', err.message); res.status(500).json({ message: 'Could not load exam details.' }); }
+});
+
+app.post('/api/exams/:examId/marks', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
+    const marks = req.body?.marks;
+    if (!isValidOrganizationId(examId) || !Array.isArray(marks) || !marks.length || marks.length > 2000) return res.status(400).json({ message: 'Exam ID र 1–2000 marks entries आवश्यक छन्।' });
+    await client.query('BEGIN');
+    const examResult = await client.query('SELECT * FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
+    if (!examResult.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
+    const exam = examResult.rows[0];
+    if (!['draft','in_review'].includes(exam.status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Approved, locked or published result cannot be edited.' }); }
+    let saved = 0;
+    for (const item of marks) {
+      const componentId = Number(item.componentId), studentId = Number(item.studentId);
+      const absent = Boolean(item.isAbsent);
+      const rawMark = item.marksObtained;
+      const mark = rawMark === '' || rawMark === null || rawMark === undefined ? null : Number(rawMark);
+      if (!isValidOrganizationId(componentId) || !isValidOrganizationId(studentId) || (!absent && mark !== null && (!validMoney(mark) || mark < 0))) throw Object.assign(new Error('Invalid student/component/marks value.'), { status: 400 });
+      if (absent && mark !== null) throw Object.assign(new Error('Absent student cannot have obtained marks.'), { status: 400 });
+      const context = await client.query(
+        `SELECT c.id AS component_id, c.max_marks, c.name_en, ees.id AS exam_subject_id, s.id AS student_id, s.class_name, s.section
+         FROM public.exam_assessment_components c JOIN public.exam_exam_subjects ees ON ees.id=c.exam_subject_id
+         JOIN public.exam_exams e ON e.id=ees.exam_id
+         JOIN public.fee_students s ON s.id=$3
+         WHERE c.id=$1 AND e.id=$2 AND e.organization_id=$4 AND c.organization_id=$4
+           AND s.organization_id=$4 AND s.is_active=TRUE AND s.class_name=e.class_name AND (e.section IS NULL OR s.section=e.section)`,
+        [componentId, examId, studentId, orgId]);
+      if (!context.rowCount) throw Object.assign(new Error('Student or component does not belong to this exam/class.'), { status: 400 });
+      const c = context.rows[0];
+      if (mark !== null && c.max_marks === null) throw Object.assign(new Error(`Component “${c.name_en}” is descriptive only; numerical marks are not configured.`), { status: 400 });
+      if (mark !== null && mark > Number(c.max_marks)) throw Object.assign(new Error(`Marks exceed maximum for ${c.name_en}.`), { status: 400 });
+      const prior = await client.query('SELECT marks_obtained, is_absent, teacher_note FROM public.exam_marks WHERE component_id=$1 AND student_id=$2 AND organization_id=$3', [componentId, studentId, orgId]);
+      const updated = await client.query(
+        `INSERT INTO public.exam_marks (organization_id, component_id, student_id, marks_obtained, is_absent, teacher_note, updated_by_email, updated_at)
+         VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7,NOW())
+         ON CONFLICT (component_id, student_id) DO UPDATE SET marks_obtained=EXCLUDED.marks_obtained, is_absent=EXCLUDED.is_absent, teacher_note=EXCLUDED.teacher_note, updated_by_email=EXCLUDED.updated_by_email, updated_at=NOW()
+         RETURNING *`,
+        [orgId, componentId, studentId, mark, absent, String(item.teacherNote || '').trim(), req.examActor.email]);
+      await writeExamHistory(client, { organizationId: orgId, examId, studentId, actor: req.examActor, action: 'marks_saved', oldValue: prior.rows[0] || null, newValue: updated.rows[0] });
+      saved += 1;
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, saved, message: `${saved} marks records saved.` });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Exam marks save error:', err.message);
+    res.status(err.status || 500).json({ message: err.status ? err.message : 'Could not save marks. No changes were committed.' });
+  } finally { client.release(); }
+});
+
+app.post('/api/exams/:examId/competency-results', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
+    const { studentId, subjectId, competencyId, achievementLevelId = null, observationEn = '', observationNe = '', evidenceNote = '', nextStepsEn = '', nextStepsNe = '' } = req.body || {};
+    const sid = Number(studentId), subid = Number(subjectId), cid = Number(competencyId), levelId = achievementLevelId ? Number(achievementLevelId) : null;
+    if (![examId, sid, subid, cid].every(isValidOrganizationId) || (levelId !== null && !isValidOrganizationId(levelId))) return res.status(400).json({ message: 'Valid exam, student, subject and competency are required.' });
+    await client.query('BEGIN');
+    const exam = await client.query('SELECT * FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
+    if (!exam.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
+    if (!['draft','in_review'].includes(exam.rows[0].status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Approved, locked or published result cannot be edited.' }); }
+    const valid = await client.query(
+      `SELECT s.id FROM public.fee_students s JOIN public.exam_exams e ON e.id=$2
+       JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.subject_id=$3
+       JOIN public.exam_competencies c ON c.id=$4 AND c.subject_id=ees.subject_id AND c.grade=e.grade
+       WHERE s.id=$1 AND s.organization_id=$5 AND e.organization_id=$5 AND s.is_active=TRUE AND s.class_name=e.class_name AND (e.section IS NULL OR s.section=e.section)`,
+      [sid, examId, subid, cid, orgId]);
+    if (!valid.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Student, subject and competency must match the selected exam.' }); }
+    if (levelId !== null) {
+      const l = await client.query('SELECT id FROM public.exam_achievement_levels WHERE id=$1 AND organization_id=$2 AND grade=$3 AND is_active=TRUE', [levelId, orgId, exam.rows[0].grade]);
+      if (!l.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Achievement level is not configured for this grade.' }); }
+    }
+    const prior = await client.query('SELECT * FROM public.exam_competency_results WHERE exam_id=$1 AND competency_id=$2 AND student_id=$3', [examId, cid, sid]);
+    const result = await client.query(
+      `INSERT INTO public.exam_competency_results (organization_id, exam_id, subject_id, competency_id, student_id, achievement_level_id, observation_en, observation_ne, evidence_note, next_steps_en, next_steps_ne, updated_by_email, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),NULLIF($11,''),$12,NOW())
+       ON CONFLICT (exam_id, competency_id, student_id) DO UPDATE SET achievement_level_id=EXCLUDED.achievement_level_id, observation_en=EXCLUDED.observation_en, observation_ne=EXCLUDED.observation_ne, evidence_note=EXCLUDED.evidence_note, next_steps_en=EXCLUDED.next_steps_en, next_steps_ne=EXCLUDED.next_steps_ne, updated_by_email=EXCLUDED.updated_by_email, updated_at=NOW()
+       RETURNING *`,
+      [orgId, examId, subid, cid, sid, levelId, String(observationEn), String(observationNe), String(evidenceNote), String(nextStepsEn), String(nextStepsNe), req.examActor.email]);
+    await writeExamHistory(client, { organizationId: orgId, examId, studentId: sid, actor: req.examActor, action: 'competency_result_saved', oldValue: prior.rows[0] || null, newValue: result.rows[0] });
+    await client.query('COMMIT'); res.status(201).json(result.rows[0]);
+  } catch (err) { await client.query('ROLLBACK').catch(() => {}); console.error('Competency result save error:', err.message); res.status(500).json({ message: 'Could not save competency result. No changes were committed.' }); }
+  finally { client.release(); }
+});
+
+app.post('/api/exams/:examId/progress-reports', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
+    const body = req.body || {}, studentId = Number(body.studentId);
+    if (!isValidOrganizationId(examId) || !isValidOrganizationId(studentId)) return res.status(400).json({ message: 'Exam and student are required.' });
+    await client.query('BEGIN');
+    const exam = await client.query('SELECT * FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
+    if (!exam.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
+    if (!['draft','in_review'].includes(exam.rows[0].status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Approved, locked or published progress reports cannot be edited.' }); }
+    const student = await client.query('SELECT id FROM public.fee_students WHERE id=$1 AND organization_id=$2 AND is_active=TRUE AND class_name=$3 AND ($4::text IS NULL OR section=$4)', [studentId, orgId, exam.rows[0].class_name, exam.rows[0].section || null]);
+    if (!student.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Student does not belong to this exam class.' }); }
+    const fields = ['strengthsEn','strengthsNe','improvementAreasEn','improvementAreasNe','teacherCommentsEn','teacherCommentsNe','recommendationsEn','recommendationsNe','parentFeedback'];
+    const text = fields.map(k => String(body[k] || '').trim());
+    const present = body.attendancePresent === '' || body.attendancePresent == null ? null : Number(body.attendancePresent);
+    const total = body.attendanceTotal === '' || body.attendanceTotal == null ? null : Number(body.attendanceTotal);
+    if ((present !== null && (!Number.isInteger(present) || present < 0)) || (total !== null && (!Number.isInteger(total) || total < 0)) || (present !== null && total !== null && present > total)) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Attendance counts are invalid.' }); }
+    const prior = await client.query('SELECT * FROM public.exam_progress_reports WHERE exam_id=$1 AND student_id=$2', [examId, studentId]);
+    const result = await client.query(
+      `INSERT INTO public.exam_progress_reports (organization_id, exam_id, student_id, strengths_en, strengths_ne, improvement_areas_en, improvement_areas_ne, teacher_comments_en, teacher_comments_ne, recommendations_en, recommendations_ne, parent_feedback, attendance_present, attendance_total, updated_by_email, updated_at)
+       VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),$13,$14,$15,NOW())
+       ON CONFLICT (exam_id, student_id) DO UPDATE SET strengths_en=EXCLUDED.strengths_en, strengths_ne=EXCLUDED.strengths_ne, improvement_areas_en=EXCLUDED.improvement_areas_en, improvement_areas_ne=EXCLUDED.improvement_areas_ne, teacher_comments_en=EXCLUDED.teacher_comments_en, teacher_comments_ne=EXCLUDED.teacher_comments_ne, recommendations_en=EXCLUDED.recommendations_en, recommendations_ne=EXCLUDED.recommendations_ne, parent_feedback=EXCLUDED.parent_feedback, attendance_present=EXCLUDED.attendance_present, attendance_total=EXCLUDED.attendance_total, updated_by_email=EXCLUDED.updated_by_email, updated_at=NOW()
+       RETURNING *`, [orgId, examId, studentId, ...text, present, total, req.examActor.email]);
+    await writeExamHistory(client, { organizationId: orgId, examId, studentId, actor: req.examActor, action: 'progress_report_saved', oldValue: prior.rows[0] || null, newValue: result.rows[0] });
+    await client.query('COMMIT'); res.status(201).json(result.rows[0]);
+  } catch (err) { await client.query('ROLLBACK').catch(() => {}); console.error('Progress report save error:', err.message); res.status(500).json({ message: 'Could not save progress report. No changes were committed.' }); }
+  finally { client.release(); }
+});
+
+app.put('/api/exams/:examId/schedule', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
+    const { examSubjectId, examDate = null, examDateBs = '', startTime = '', endTime = '', roomOrVenue = '', invigilator = '' } = req.body || {};
+    const subjectId = Number(examSubjectId);
+    if (!isValidOrganizationId(examId) || !isValidOrganizationId(subjectId) || (examDate && !isValidDate(examDate))) return res.status(400).json({ message: 'Valid exam, subject and date are required.' });
+    if (startTime && !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(startTime)) return res.status(400).json({ message: 'Invalid start time.' });
+    if (endTime && !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(endTime)) return res.status(400).json({ message: 'Invalid end time.' });
+    if (startTime && endTime && endTime <= startTime) return res.status(400).json({ message: 'End time must be later than start time.' });
+    await client.query('BEGIN');
+    const exam = await client.query('SELECT status FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
+    if (!exam.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
+    if (!['draft','in_review'].includes(exam.rows[0].status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Approved/locked/published schedule cannot be modified.' }); }
+    const subject = await client.query('SELECT id FROM public.exam_exam_subjects WHERE id=$1 AND exam_id=$2 AND organization_id=$3', [subjectId, examId, orgId]);
+    if (!subject.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Subject is not part of this exam.' }); }
+    const prior = await client.query('SELECT * FROM public.exam_assessment_schedule WHERE exam_id=$1 AND exam_subject_id=$2', [examId, subjectId]);
+    const result = await client.query(
+      `INSERT INTO public.exam_assessment_schedule (organization_id, exam_id, exam_subject_id, exam_date, exam_date_bs, start_time, end_time, room_or_venue, invigilator, updated_by_email, updated_at)
+       VALUES ($1,$2,$3,$4::date,NULLIF($5,''),NULLIF($6,'')::time,NULLIF($7,'')::time,NULLIF($8,''),NULLIF($9,''),$10,NOW())
+       ON CONFLICT (exam_id, exam_subject_id) DO UPDATE SET exam_date=EXCLUDED.exam_date, exam_date_bs=EXCLUDED.exam_date_bs, start_time=EXCLUDED.start_time, end_time=EXCLUDED.end_time, room_or_venue=EXCLUDED.room_or_venue, invigilator=EXCLUDED.invigilator, updated_by_email=EXCLUDED.updated_by_email, updated_at=NOW()
+       RETURNING *`, [orgId, examId, subjectId, examDate || null, String(examDateBs), String(startTime), String(endTime), String(roomOrVenue), String(invigilator), req.examActor.email]);
+    await writeExamHistory(client, { organizationId: orgId, examId, actor: req.examActor, action: 'exam_schedule_saved', oldValue: prior.rows[0] || null, newValue: result.rows[0] });
+    await client.query('COMMIT');
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Exam schedule save error:', err.message);
+    res.status(500).json({ message: 'Could not save examination schedule. No changes were committed.' });
+  } finally { client.release(); }
+});
+
+app.post('/api/exams/:examId/print-history', async (req, res) => {
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
+    const reportType = String(req.body?.reportType || '');
+    const studentId = req.body?.studentId ? Number(req.body.studentId) : null;
+    const allowedTypes = ['standard_marksheet','progress_report','bulk_marksheet','bulk_progress_report'];
+    if (!isValidOrganizationId(examId) || !allowedTypes.includes(reportType)) return res.status(400).json({ message: 'Valid exam and report type required.' });
+    const exam = await pool.query('SELECT id, grade, class_name, section, status, exam_name_en, exam_name_ne, academic_year_id FROM public.exam_exams WHERE id=$1 AND organization_id=$2', [examId, orgId]);
+    if (!exam.rowCount) return res.status(404).json({ message: 'Exam not found.' });
+    let count = 0, student = null;
+    if (studentId) {
+      const result = await pool.query('SELECT id, student_name, reg_no, admission_no, class_name, section, roll_number FROM public.fee_students WHERE id=$1 AND organization_id=$2 AND class_name=$3 AND ($4::text IS NULL OR section=$4)', [studentId, orgId, exam.rows[0].class_name, exam.rows[0].section || null]);
+      if (!result.rowCount) return res.status(400).json({ message: 'Student does not belong to this exam.' });
+      student = result.rows[0]; count = 1;
+    } else {
+      const result = await pool.query('SELECT COUNT(*)::int AS n FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND class_name=$2 AND ($3::text IS NULL OR section=$3)', [orgId, exam.rows[0].class_name, exam.rows[0].section || null]);
+      count = Number(result.rows[0]?.n || 0);
+    }
+    const snapshot = { exam: exam.rows[0], student, reportType, studentsCount: count, generatedBy: req.examActor.email };
+    const result = await pool.query(
+      `INSERT INTO public.exam_report_history (organization_id, exam_id, student_id, report_type, students_count, exam_status, generated_by_email, snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,
+      [orgId, examId, studentId, reportType, count, exam.rows[0].status, req.examActor.email, JSON.stringify(snapshot)]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { console.error('Report print history error:', err.message); res.status(500).json({ message: 'Could not record report history.' }); }
+});
+
+app.get('/api/exams/:examId/print-history', async (req, res) => {
+  try {
+    const examId = Number(req.params.examId);
+    const result = await pool.query(
+      `SELECT id, exam_id, student_id, report_type, students_count, exam_status, generated_by_email, generated_at, snapshot
+       FROM public.exam_report_history WHERE organization_id=$1 AND exam_id=$2 ORDER BY generated_at DESC LIMIT 500`,
+      [req.examActor.organizationId, examId]);
+    res.json(result.rows);
+  } catch (err) { console.error('Report print history list error:', err.message); res.status(500).json({ message: 'Could not load report history.' }); }
+});
+
+app.post('/api/exams/:examId/status', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId), target = String(req.body?.status || '');
+    const transitions = {
+      draft: ['in_review'],
+      in_review: ['draft','approved'],
+      approved: ['draft','locked'],
+      locked: ['published'],
+      published: []
+    };
+    if (!isValidOrganizationId(examId) || !Object.hasOwn(transitions, target)) return res.status(400).json({ message: 'Valid target status required.' });
+    if (target === 'in_review' && !['admin','exam_coordinator','teacher'].includes(req.examActor.role)) return res.status(403).json({ message: 'Only assigned teachers/coordinators can submit for review.' });
+    if (target === 'draft' && !['admin','exam_coordinator'].includes(req.examActor.role)) return res.status(403).json({ message: 'Only admin/coordinator can return an exam to draft.' });
+    if (target === 'approved' && !['admin','principal','exam_coordinator'].includes(req.examActor.role)) return res.status(403).json({ message: 'Only authorized reviewers can approve.' });
+    if (target === 'published' && !['admin','principal'].includes(req.examActor.role)) return res.status(403).json({ message: 'Only admin/principal can publish results.' });
+    await client.query('BEGIN');
+    const before = await client.query('SELECT * FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
+    if (!before.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
+    const old = before.rows[0];
+    if (!transitions[old.status]?.includes(target)) { await client.query('ROLLBACK'); return res.status(409).json({ message: `Status ${old.status} बाट ${target} मा जान मिल्दैन।` }); }
+    if (target === 'in_review') {
+      const component = await client.query('SELECT COUNT(*)::int AS n FROM public.exam_exam_subjects WHERE exam_id=$1', [examId]);
+      if (!component.rows[0].n) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Review मा पठाउनु अघि कम्तीमा एउटा subject configure गर्नुहोस्।' }); }
+    }
+    const updated = await client.query(
+      `UPDATE public.exam_exams SET status=$3, updated_at=NOW(),
+        approved_by_email=CASE WHEN $3='approved' THEN $4 ELSE approved_by_email END,
+        published_by_email=CASE WHEN $3='published' THEN $4 ELSE published_by_email END,
+        published_at=CASE WHEN $3='published' THEN NOW() ELSE published_at END
+       WHERE id=$1 AND organization_id=$2 RETURNING *`, [examId, orgId, target, req.examActor.email]);
+    await writeExamHistory(client, { organizationId: orgId, examId, actor: req.examActor, action: `status_${target}`, oldValue: { status: old.status }, newValue: { status: target } });
+    await client.query('COMMIT'); res.json(updated.rows[0]);
+  } catch (err) { await client.query('ROLLBACK').catch(() => {}); console.error('Exam status transition error:', err.message); res.status(500).json({ message: 'Could not update exam result status.' }); }
+  finally { client.release(); }
+});
+
+app.get('/api/exams/:examId/history', async (req, res) => {
+  try {
+    const examId = Number(req.params.examId);
+    const result = await pool.query(
+      `SELECT id, exam_id, student_id, actor_email, actor_role, action, old_value, new_value, note, created_at
+       FROM public.exam_result_history WHERE organization_id=$1 AND exam_id=$2 ORDER BY created_at DESC LIMIT 500`,
+      [req.examActor.organizationId, examId]);
+    res.json(result.rows);
+  } catch (err) { console.error('Exam history error:', err.message); res.status(500).json({ message: 'Could not load result history.' }); }
+});
+
+app.get('/api/exams/report-settings', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM public.exam_report_settings WHERE organization_id=$1', [req.examActor.organizationId]);
+    res.json(result.rows[0] || {});
+  } catch (err) {
+    console.error('Exam report settings read error:', err.message);
+    res.status(500).json({ message: 'Could not load school report settings.' });
+  }
+});
+
+app.put('/api/exams/report-settings', async (req, res) => {
+  if (req.examActor.role !== 'admin') return res.status(403).json({ message: 'Admin role required.' });
+  const body = req.body || {};
+  const nameEn = String(body.schoolNameEn || '').trim();
+  const nameNe = String(body.schoolNameNe || '').trim();
+  const addressEn = String(body.addressEn || '').trim();
+  const addressNe = String(body.addressNe || '').trim();
+  const phone = String(body.contactPhone || '').trim();
+  const email = String(body.contactEmail || '').trim().toLowerCase();
+  const logoUrl = String(body.logoUrl || '').trim();
+  if (!nameEn && !nameNe) return res.status(400).json({ message: 'Enter the school name in Nepali or English.' });
+  if (nameEn.length > 200 || nameNe.length > 200 || phone.length > 60 || (email && !/^\S+@\S+\.\S+$/.test(email))) return res.status(400).json({ message: 'School details contain an invalid email or overly long field.' });
+  if (logoUrl && !/^https?:\/\//i.test(logoUrl)) return res.status(400).json({ message: 'Logo URL must start with http:// or https://.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `INSERT INTO public.exam_report_settings (organization_id, school_name_en, school_name_ne, address_en, address_ne, contact_phone, contact_email, logo_url, updated_by_email, updated_at)
+       VALUES ($1,NULLIF($2,''),NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9,NOW())
+       ON CONFLICT (organization_id) DO UPDATE SET school_name_en=EXCLUDED.school_name_en, school_name_ne=EXCLUDED.school_name_ne, address_en=EXCLUDED.address_en, address_ne=EXCLUDED.address_ne, contact_phone=EXCLUDED.contact_phone, contact_email=EXCLUDED.contact_email, logo_url=EXCLUDED.logo_url, updated_by_email=EXCLUDED.updated_by_email, updated_at=NOW()
+       RETURNING *`, [req.examActor.organizationId, nameEn, nameNe, addressEn, addressNe, phone, email, logoUrl, req.examActor.email]);
+    await client.query(`INSERT INTO public.exam_result_history (organization_id, actor_email, actor_role, action, new_value) VALUES ($1,$2,$3,'report_settings_updated',$4::jsonb)`, [req.examActor.organizationId, req.examActor.email, req.examActor.role, JSON.stringify(result.rows[0])]);
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Exam report settings save error:', err.message);
+    res.status(500).json({ message: 'Could not save school report settings. No changes were committed.' });
+  } finally { client.release(); }
+});
+
+app.get('/api/exams/roles', async (req, res) => {
+  try {
+    if (req.examActor.role !== 'admin') {
+      const own = await pool.query(`SELECT id, organization_id, user_email, role, is_active, assigned_by_email, created_at FROM public.exam_role_assignments WHERE organization_id=$1 AND LOWER(user_email)=$2`, [req.examActor.organizationId, req.examActor.email]);
+      return res.json(own.rows);
+    }
+    const result = await pool.query(`SELECT id, organization_id, user_email, role, is_active, assigned_by_email, created_at FROM public.exam_role_assignments WHERE organization_id=$1 ORDER BY user_email`, [req.examActor.organizationId]);
+    res.json(result.rows);
+  } catch (err) { console.error('Exam roles list error:', err.message); res.status(500).json({ message: 'Could not load role assignments.' }); }
+});
+
+app.post('/api/exams/roles', async (req, res) => {
+  try {
+    if (req.examActor.role !== 'admin') return res.status(403).json({ message: 'Admin role required.' });
+    const email = String(req.body?.userEmail || '').trim().toLowerCase(), role = String(req.body?.role || '');
+    if (!/^\S+@\S+\.\S+$/.test(email) || !['admin','principal','exam_coordinator','teacher'].includes(role)) return res.status(400).json({ message: 'Valid email and role required.' });
+    const result = await pool.query(
+      `INSERT INTO public.exam_role_assignments (organization_id, user_email, role, is_active, assigned_by_email)
+       VALUES ($1,$2,$3,TRUE,$4) ON CONFLICT (organization_id, user_email) DO UPDATE SET role=EXCLUDED.role, is_active=TRUE, assigned_by_email=EXCLUDED.assigned_by_email RETURNING *`,
+      [req.examActor.organizationId, email, role, req.examActor.email]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { console.error('Exam role assign error:', err.message); res.status(500).json({ message: 'Could not assign role.' }); }
+});
+
+app.put('/api/exams/roles/:roleId/deactivate', async (req, res) => {
+  try {
+    if (req.examActor.role !== 'admin') return res.status(403).json({ message: 'Admin role required.' });
+    const result = await pool.query(`UPDATE public.exam_role_assignments SET is_active=FALSE WHERE id=$1 AND organization_id=$2 RETURNING *`, [Number(req.params.roleId), req.examActor.organizationId]);
+    if (!result.rowCount) return res.status(404).json({ message: 'Role assignment not found.' });
+    res.json(result.rows[0]);
+  } catch (err) { console.error('Deactivate role error:', err.message); res.status(500).json({ message: 'Could not deactivate role.' }); }
+});
+
+
 app.listen(port, () => {
   console.log(`Accounting API listening on port ${port}`);
 });
