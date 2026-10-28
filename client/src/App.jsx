@@ -165,7 +165,7 @@ function LoginSystem({ onLogin }) {
     <div style={styles.loginPage}>
       <form onSubmit={login} style={styles.loginCard}>
         <div style={styles.loginHeaderIcon}>
-          <Landmark size={32} color="#4f46e5" />
+          <Landmark size={32} color="#ff4fa3" />
         </div>
         <h1 style={styles.loginTitle}>LedgerPro</h1>
         <p style={styles.loginSubtitle}>United English Boarding School</p>
@@ -335,23 +335,23 @@ function Dashboard({ accounts, transactions, loading, onReload, error }) {
           value={money(totalIncome)}
           note="आम्दानी खाताहरूको उपलब्ध balance"
           icon={<TrendingUp size={20} />}
-          color="#059669"
-          bg="#ecfdf5"
+          color="#15d9a2"
+          bg="rgba(21,217,162,0.14)"
         />
         <Metric
           title="कुल खर्च / Total Expenses"
           value={money(totalExpenses)}
           note="खर्च खाताहरूको उपलब्ध balance"
           icon={<ArrowDownRight size={20} />}
-          color="#dc2626"
-          bg="#fef2f2"
+          color="#ff5e70"
+          bg="rgba(255,94,112,0.14)"
         />
         <Metric
           title="नगद तथा बैंक / Cash & Bank"
           value={money(cashBank)}
           note="नगद तथा बैंक खाताहरूको उपलब्ध balance"
           icon={<Wallet size={20} />}
-          color="#4f46e5"
+          color="#ff4fa3"
           bg="#eef2ff"
         />
         <Metric
@@ -359,8 +359,8 @@ function Dashboard({ accounts, transactions, loading, onReload, error }) {
           value={accounts.length.toLocaleString('en-IN')}
           note="लोड भएका खाताहरू"
           icon={<BookOpen size={20} />}
-          color="#d97706"
-          bg="#fffbeb"
+          color="#ffb020"
+          bg="rgba(255,176,32,0.15)"
         />
       </div>
 
@@ -390,10 +390,10 @@ function Dashboard({ accounts, transactions, loading, onReload, error }) {
               {todayTransactions.map((t, i) => (
                 <tr key={`${t.ref || 'entry'}-${i}`}>
                   <td><span style={styles.dateBadge}>{toBS(t.date)} BS</span></td>
-                  <td><strong style={{ color: '#334155' }}>{t.ref || '-'}</strong></td>
+                  <td><strong style={{ color: '#ff5aa9' }}>{t.ref || '-'}</strong></td>
                   <td>{t.description}</td>
                   <td><span style={styles.typeBadge}>{t.category || 'Journal Voucher'}</span></td>
-                  <td><strong style={{ color: '#0f172a' }}>{t.amount || money(t.debit || t.credit)}</strong></td>
+                  <td><strong style={{ color: '#f4f7ff' }}>{t.amount || money(t.debit || t.credit)}</strong></td>
                 </tr>
               ))}
               {!todayTransactions.length && (
@@ -1479,7 +1479,7 @@ function FinancialReports({ accounts }) {
                     value={money(trialTotals.debit)}
                     note="Ledger खाताहरूको डेबिट मौज्दात"
                     icon={<ArrowDownRight size={20} />}
-                    color="#4f46e5"
+                    color="#ff4fa3"
                     bg="#eef2ff"
                   />
                   <Metric
@@ -1564,7 +1564,7 @@ function FinancialReports({ accounts }) {
                 value={money(totalIncome - totalExpenses)}
                 note="आम्दानी - खर्च"
                 icon={<ChartNoAxesCombined size={20} />}
-                color="#4f46e5"
+                color="#ff4fa3"
                 bg="#eef2ff"
               />
             </div>
@@ -2628,7 +2628,7 @@ function StudentFees({ accounts, onRefreshAccounts }) {
               <div style={styles.metricsGrid}>
                 <Metric title="Present / उपस्थित" value={profileData.attendanceSummary.present_days} note="रेकर्ड गरिएको दिन" icon={<CheckCircle2 size={19} />} color="#059669" bg="#d1fae5" />
                 <Metric title="Absent / अनुपस्थित" value={profileData.attendanceSummary.absent_days} note="रेकर्ड गरिएको दिन" icon={<AlertCircle size={19} />} color="#dc2626" bg="#fee2e2" />
-                <Metric title="Attendance %" value={`${profileData.attendanceSummary.attendance_percent}%`} note={`${profileData.attendanceSummary.total_marked} दिन मार्क भएको`} icon={<CalendarDays size={19} />} color="#4f46e5" bg="#eef2ff" />
+                <Metric title="Attendance %" value={`${profileData.attendanceSummary.attendance_percent}%`} note={`${profileData.attendanceSummary.total_marked} दिन मार्क भएको`} icon={<CalendarDays size={19} />} color="#ff4fa3" bg="#eef2ff" />
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>{['present', 'absent', 'late', 'leave'].map(status => <button key={status} type="button" style={status === 'absent' ? styles.secondaryButton : styles.primaryButton} disabled={saving} onClick={() => markStudentAttendance(status)}>{({ present: 'आज Present', absent: 'आज Absent', late: 'आज Late', leave: 'आज Leave' })[status]}</button>)}</div>
               <p style={{ fontSize: 12, color: '#64748b' }}>आजको मिति (BS): {toBS(getTodayAD())} · (AD): {getTodayAD()}</p>
@@ -2648,7 +2648,7 @@ function StudentFees({ accounts, onRefreshAccounts }) {
           {profileTab === 'Ledger & Billing' && <section style={styles.panel}>
             {panelHeader('Ledger & Billing / बिल तथा भुक्तानी', 'Current Due, bill history र payment history।', <button type="button" style={styles.primaryButton} onClick={() => { setBillStudentId(String(profileStudentId)); setTab('Monthly Bill'); }}><Plus size={15} /> Generate Bill</button>)}
             {(() => { const sbills = bills.filter(b => String(b.student_id) === String(profileStudentId)); const sreceipts = receipts.filter(r => String(r.student_id) === String(profileStudentId)); const billed = sbills.reduce((sum, b) => sum + Number(b.total_amount || 0), 0); const received = sreceipts.reduce((sum, r) => sum + Number(r.total_amount || 0), 0); const due = Math.max(0, billed - received); return <>
-              <div style={styles.metricsGrid}><Metric title="Current Due / बाँकी" value={money(due)} note={`${sbills.length} bills`} icon={<AlertCircle size={19} />} color="#d97706" bg="#fef3c7" /><Metric title="Billed / बिल" value={money(billed)} note="कुल billing" icon={<FileText size={19} />} color="#4f46e5" bg="#eef2ff" /><Metric title="Received / प्राप्त" value={money(received)} note={`${sreceipts.length} receipts`} icon={<Wallet size={19} />} color="#059669" bg="#d1fae5" /></div>
+              <div style={styles.metricsGrid}><Metric title="Current Due / बाँकी" value={money(due)} note={`${sbills.length} bills`} icon={<AlertCircle size={19} />} color="#d97706" bg="#fef3c7" /><Metric title="Billed / बिल" value={money(billed)} note="कुल billing" icon={<FileText size={19} />} color="#ff4fa3" bg="#eef2ff" /><Metric title="Received / प्राप्त" value={money(received)} note={`${sreceipts.length} receipts`} icon={<Wallet size={19} />} color="#059669" bg="#d1fae5" /></div>
               <h3 style={{ fontSize: 14 }}>Bill History</h3><div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Bill No', 'Month (BS/AD)', 'Billed', 'Received', 'Due', 'Status'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{sbills.map(b => <tr key={b.id}><td style={{ padding: 10 }}>{b.bill_number}</td><td style={{ padding: 10 }}><strong>{formatBSMonth((toBS(String(b.fee_month).slice(0, 10)) || '').slice(0, 7)) || '—'}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatBSDateLabel(b.fee_month)}</small></td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.total_amount)}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.total_received)}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.balance_due)}</td><td style={{ padding: 10 }}>{b.status}</td></tr>)}{!sbills.length && <tr><td colSpan="6" style={styles.emptyCell}>Bill छैन। Generate Bill प्रयोग गर्नुहोस्।</td></tr>}</tbody></table></div>
               <h3 style={{ fontSize: 14, marginTop: 20 }}>Payment History</h3><div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Receipt No', 'Date (BS/AD)', 'Mode', 'Paid To', 'Amount', 'Receipt'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{sreceipts.map(r => <tr key={r.id}><td style={{ padding: 10 }}>{r.receipt_number}</td><td style={{ padding: 10 }}><strong>{toBS(formatDateAD(r.receipt_date))}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(r.receipt_date)}</small></td><td style={{ padding: 10 }}>{String(r.payment_method).toUpperCase()}</td><td style={{ padding: 10 }}>{r.payment_account_name}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(r.total_amount)}</td><td style={{ padding: 10 }}><button type="button" style={styles.secondaryButton} onClick={() => printStudentReceipt(r)}><Printer size={14} /> Print / PDF</button></td></tr>)}{!sreceipts.length && <tr><td colSpan="6" style={styles.emptyCell}>Payment छैन।</td></tr>}</tbody></table></div>
             </>; })()}
@@ -2793,7 +2793,7 @@ function StudentFees({ accounts, onRefreshAccounts }) {
           </div>
           {ledger && <>
             <div style={styles.metricsGrid}>
-              <Metric title="Total Billed / जम्मा बिल" value={money(ledger.totals.billed)} note={`${(ledger.student.reg_no || ledger.student.admission_no)} · ${ledger.student.student_name}`} icon={<FileText size={19} />} color="#4f46e5" bg="#eef2ff" />
+              <Metric title="Total Billed / जम्मा बिल" value={money(ledger.totals.billed)} note={`${(ledger.student.reg_no || ledger.student.admission_no)} · ${ledger.student.student_name}`} icon={<FileText size={19} />} color="#ff4fa3" bg="#eef2ff" />
               <Metric title="Total Received / जम्मा प्राप्त" value={money(ledger.totals.received)} note="Receipt बाट accounting posting" icon={<Wallet size={19} />} color="#059669" bg="#d1fae5" />
               <Metric title="Balance Due / बाँकी" value={money(ledger.totals.balance)} note={`${ledger.student.class_name}-${ledger.student.section} · Roll ${ledger.student.roll_number}`} icon={<AlertCircle size={19} />} color="#d97706" bg="#fef3c7" />
             </div>
@@ -2885,7 +2885,29 @@ export default function App() {
     : active;
 
   return (
-    <div style={styles.appShell}>
+    <div style={styles.appShell} className="ledgerpro-shell">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700;800&family=Noto+Sans:wght@400;500;600;700;800&display=swap');
+        .ledgerpro-shell{color-scheme:dark; min-height:100vh;}
+        .ledgerpro-shell *{box-sizing:border-box;}
+        .ledgerpro-shell button{font-family:inherit;}
+        .ledgerpro-shell button:hover{filter:brightness(1.08);}
+        .ledgerpro-shell button:focus-visible,.ledgerpro-shell input:focus-visible,.ledgerpro-shell select:focus-visible{outline:2px solid rgba(34,199,255,.72);outline-offset:2px;}
+        .ledgerpro-shell input::placeholder{color:#7183a5;}
+        .ledgerpro-shell input:focus,.ledgerpro-shell select:focus{border-color:#3c9fc3!important;box-shadow:0 0 0 3px rgba(34,199,255,.09);}
+        .ledgerpro-shell table:not(.exam-print-table){background:#0b1120;border-collapse:separate;border-spacing:0;}
+        .ledgerpro-shell table:not(.exam-print-table) thead th{background:linear-gradient(110deg,#211b46,#141a2d);color:#ff68b1;border-bottom:1px solid #39315f;padding:14px 15px;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;}
+        .ledgerpro-shell table:not(.exam-print-table) tbody td{padding:14px 15px;color:#d0daed;border-bottom:1px solid #1c2539;vertical-align:middle;}
+        .ledgerpro-shell table:not(.exam-print-table) tbody tr:nth-child(even) td{background:rgba(21,29,47,.42);}
+        .ledgerpro-shell table:not(.exam-print-table) tbody tr:hover td{background:#17172d;}
+        .ledgerpro-shell table:not(.exam-print-table) tbody tr:last-child td{border-bottom:0;}
+        .ledgerpro-shell ::-webkit-scrollbar{width:9px;height:9px;}
+        .ledgerpro-shell ::-webkit-scrollbar-track{background:#090d17;}
+        .ledgerpro-shell ::-webkit-scrollbar-thumb{background:#343254;border-radius:20px;border:2px solid #090d17;}
+        .ledgerpro-shell ::-webkit-scrollbar-thumb:hover{background:#65538d;}
+        @media(max-width:760px){.ledgerpro-shell .contentArea{padding:16px!important}.ledgerpro-shell header{padding-left:15px!important;padding-right:15px!important}.ledgerpro-shell table:not(.exam-print-table){min-width:680px;}}
+        @media print{.ledgerpro-shell{background:#fff!important;color:#111!important;color-scheme:light!important}.ledgerpro-shell table:not(.exam-print-table) thead th{background:#f1f1f1!important;color:#111!important}.ledgerpro-shell table:not(.exam-print-table) tbody td{background:#fff!important;color:#111!important;border-color:#bbb!important}}
+      `}</style>
       <Sidebar
         active={active}
         setActive={setActive}
@@ -2905,8 +2927,8 @@ export default function App() {
             <Menu size={20} />
           </button>
 
-          <div style={{ flex: 1, color: '#475569', fontSize: '14px' }}>
-            Workspace / <strong style={{ color: '#0f172a' }}>{pageTitle}</strong>
+          <div style={{ flex: 1, color: '#a8b6d2', fontSize: '14px' }}>
+            Workspace / <strong style={{ color: '#f4f7ff' }}>{pageTitle}</strong>
           </div>
 
           <div style={styles.searchContainer}>
@@ -2993,251 +3015,83 @@ export default function App() {
 const styles = {
   loginPage: {
     minHeight: '100vh', display: 'grid', placeItems: 'center',
-    background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)', padding: 20, fontFamily: 'Inter, Arial, sans-serif'
+    background: 'radial-gradient(circle at 15% 0%, rgba(87, 40, 130, .35), transparent 35%), linear-gradient(135deg, #07090e 0%, #0b1020 58%, #15102a 100%)',
+    padding: 20, fontFamily: "'Noto Sans Devanagari', 'Noto Sans', Inter, Arial, sans-serif"
   },
   loginCard: {
-    background: '#ffffff', padding: 40, borderRadius: 20, width: '100%',
-    maxWidth: 440, boxSizing: 'border-box', display: 'grid', gap: 18,
-    boxShadow: '0 20px 40px rgba(0,0,0,0.2)'
+    background: 'linear-gradient(145deg, #111827 0%, #0b1120 100%)', padding: 40,
+    borderRadius: 22, width: '100%', maxWidth: 440, boxSizing: 'border-box',
+    display: 'grid', gap: 18, color: '#edf3ff',
+    boxShadow: '0 24px 80px rgba(0,0,0,.42)', border: '1px solid #292747'
   },
   loginHeaderIcon: {
-    width: 60, height: 60, borderRadius: 16, background: '#eef2ff',
+    width: 60, height: 60, borderRadius: 16,
+    background: 'linear-gradient(135deg, rgba(255,79,163,.2), rgba(34,199,255,.16))',
+    border: '1px solid rgba(255,79,163,.35)', color: '#ff4fa3',
     display: 'grid', placeItems: 'center', margin: '0 auto 4px'
   },
-  loginTitle: {
-    fontSize: 26, fontWeight: 700, textAlign: 'center', margin: 0, color: '#0f172a', letterSpacing: '-0.03em'
-  },
-  loginSubtitle: {
-    textAlign: 'center', margin: '-10px 0 0', color: '#4f46e5', fontWeight: 600, fontSize: 14
-  },
-  loginSubText: {
-    textAlign: 'center', margin: '-14px 0 10px', color: '#64748b', fontSize: 13
-  },
-  demoBadge: {
-    background: '#f8fafc', padding: '10px', borderRadius: 8, textAlign: 'center',
-    fontSize: 12, color: '#475569', border: '1px solid #e2e8f0'
-  },
-  appShell: {
-    minHeight: '100vh', display: 'flex', background: '#f8fafc',
-    color: '#0f172a', fontFamily: 'Inter, Arial, sans-serif'
-  },
-  sidebar: {
-    width: 270, background: '#0f172a', color: '#cbd5e1',
-    padding: '20px 16px', boxSizing: 'border-box', display: 'flex',
-    flexDirection: 'column', gap: 14, flexShrink: 0, borderRight: '1px solid #1e293b'
-  },
-  sidebarOpen: {
-    position: 'fixed', inset: '0 auto 0 0', zIndex: 30,
-    width: 280, overflowY: 'auto', boxShadow: '10px 0 30px rgba(0,0,0,0.5)'
-  },
-  mobileOverlay: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 25,
-    backdropFilter: 'blur(2px)'
-  },
-  brand: {
-    display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px 12px', borderBottom: '1px solid #1e293b'
-  },
-  brandIconBox: {
-    width: 38, height: 38, borderRadius: 10, background: '#4f46e5',
-    display: 'grid', placeItems: 'center', boxShadow: '0 4px 12px rgba(79,70,229,0.4)'
-  },
-  workspace: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
-    background: '#1e293b', borderRadius: 10, fontSize: 13, border: '1px solid #334155'
-  },
-  workspaceIcon: {
-    display: 'grid', placeItems: 'center', width: 32, height: 32,
-    borderRadius: 8, background: '#4f46e5', color: '#fff', fontWeight: 700, fontSize: 12
-  },
-  navScroll: {
-    overflowY: 'auto', flex: 1, paddingRight: '2px'
-  },
-  navTitle: {
-    padding: '16px 8px 6px', fontSize: 11, color: '#64748b',
-    textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700
-  },
-  navButton: {
-    display: 'flex', alignItems: 'center', gap: 11, width: '100%',
-    padding: '10px 12px', border: 0, borderRadius: 8,
-    color: '#94a3b8', background: 'transparent', textAlign: 'left',
-    cursor: 'pointer', marginBottom: 3, fontSize: 13, fontWeight: 500,
-    transition: 'all 0.15s ease'
-  },
-  navActive: {
-    background: '#4f46e5', color: '#ffffff', fontWeight: 600,
-    boxShadow: '0 4px 12px rgba(79,70,229,0.3)'
-  },
-  userCard: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 8px',
-    background: '#1e293b', borderRadius: 10, border: '1px solid #334155'
-  },
-  avatar: {
-    width: 36, height: 36, borderRadius: '50%', display: 'grid',
-    placeItems: 'center', background: '#eef2ff', color: '#4f46e5',
-    fontWeight: 700, flexShrink: 0, fontSize: 14
-  },
-  logoutButton: {
-    background: 'transparent', color: '#94a3b8', border: 0,
-    padding: 6, cursor: 'pointer', borderRadius: 6, display: 'grid', placeItems: 'center',
-    transition: 'color 0.2s'
-  },
-  iconButton: {
-    display: 'inline-grid', placeItems: 'center', background: '#ffffff',
-    color: '#475569', border: '1px solid #e2e8f0', borderRadius: 8,
-    padding: 8, cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-  },
-  mainContent: {
-    minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column'
-  },
-  topbar: {
-    display: 'flex', alignItems: 'center', gap: 14, minHeight: 68,
-    background: '#ffffff', borderBottom: '1px solid #e2e8f0',
-    padding: '10px 28px', boxSizing: 'border-box', boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
-  },
-  searchContainer: {
-    display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc',
-    border: '1px solid #e2e8f0', borderRadius: 9, padding: '8px 12px',
-    maxWidth: 320, width: '100%'
-  },
-  searchInput: {
-    border: 0, outline: 0, background: 'transparent', minWidth: 0, width: '100%', fontSize: 13, color: '#0f172a'
-  },
-  contentArea: {
-    padding: 28, flex: 1, width: '100%', maxWidth: 1600,
-    boxSizing: 'border-box', margin: '0 auto'
-  },
-  pageHeading: {
-    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-    gap: 16, flexWrap: 'wrap', marginBottom: 24
-  },
-  eyebrow: {
-    color: '#4f46e5', fontSize: 12, fontWeight: 700,
-    textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em'
-  },
-  h1: { fontSize: 26, margin: '0 0 4px', letterSpacing: '-.03em', color: '#0f172a', fontWeight: 700 },
-  subtitle: { color: '#64748b', fontSize: 14, margin: 0 },
-  metricsGrid: {
-    display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))',
-    gap: 18, marginBottom: 24
-  },
-  metricCard: {
-    background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 14,
-    padding: 20, boxShadow: '0 4px 12px rgba(15,23,42,0.03)', minWidth: 0,
-    transition: 'transform 0.2s, box-shadow 0.2s'
-  },
-  metricTop: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: 10
-  },
-  metricTitleText: { fontSize: 13, color: '#64748b', fontWeight: 600 },
-  metricIcon: {
-    width: 42, height: 42, display: 'grid', placeItems: 'center',
-    borderRadius: 12, flexShrink: 0
-  },
-  metricValue: {
-    fontSize: 24, fontWeight: 750, margin: '14px 0 6px',
-    overflowWrap: 'anywhere', color: '#0f172a', letterSpacing: '-0.02em'
-  },
-  metricNote: { color: '#64748b', fontSize: 12 },
-  panel: {
-    background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 16,
-    padding: 24, marginBottom: 24, minWidth: 0,
-    boxShadow: '0 4px 16px rgba(15,23,42,0.04)'
-  },
-  panelHeading: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: 14, flexWrap: 'wrap', marginBottom: 18
-  },
-  panelTitle: { fontSize: 18, fontWeight: 700, color: '#0f172a', margin: 0, letterSpacing: '-0.02em' },
-  panelDesc: { fontSize: 13, color: '#64748b', margin: '2px 0 0' },
-  countBadge: {
-    borderRadius: 20, padding: '4px 12px', background: '#eef2ff',
-    color: '#4f46e5', fontSize: 12, fontWeight: 700, border: '1px solid #c7d2fe'
-  },
-  tableWrap: { width: '100%', overflowX: 'auto', borderRadius: 10, border: '1px solid #f1f5f9' },
-  table: {
-    width: '100%', borderCollapse: 'collapse', fontSize: 13,
-    minWidth: 700, textAlign: 'left'
-  },
-  emptyCell: {
-    textAlign: 'center', padding: 40, color: '#64748b', fontStyle: 'italic'
-  },
-  label: {
-    display: 'grid', gap: 6, marginBottom: 16, fontSize: 13,
-    fontWeight: 600, color: '#334155'
-  },
-  input: {
-    width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '10px 14px',
-    border: '1px solid #cbd5e1', borderRadius: 9, background: '#ffffff',
-    color: '#0f172a', fontSize: '13px', outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s'
-  },
-  selectInput: {
-    width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '10px 14px',
-    border: '1px solid #cbd5e1', borderRadius: 9, background: '#ffffff',
-    color: '#0f172a', fontSize: '13px', outline: 'none', cursor: 'pointer'
-  },
-  formGrid: {
-    display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))',
-    gap: 18
-  },
-  primaryButton: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    gap: 8, padding: '11px 20px', border: 0, borderRadius: 10,
-    background: '#4f46e5', color: '#ffffff', fontWeight: 600, cursor: 'pointer',
-    fontSize: '14px', boxShadow: '0 4px 12px rgba(79,70,229,0.3)', transition: 'background 0.2s'
-  },
-  secondaryButton: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    gap: 7, padding: '10px 16px', border: '1px solid #cbd5e1',
-    borderRadius: 10, background: '#ffffff', color: '#334155',
-    cursor: 'pointer', fontWeight: 600, fontSize: '13px', transition: 'background 0.2s'
-  },
-  dangerButton: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    padding: '8px', border: '1px solid #fecaca', borderRadius: 8,
-    color: '#dc2626', background: '#fef2f2', cursor: 'pointer', transition: 'background 0.2s'
-  },
-  disabledDangerButton: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    padding: '8px', border: '1px solid #e2e8f0', borderRadius: 8,
-    color: '#94a3b8', background: '#f8fafc', cursor: 'not-allowed', opacity: 0.6
-  },
-  balanceStatus: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px',
-    borderRadius: 10, margin: '20px 0', fontWeight: 600, fontSize: 13, border: '1px solid'
-  },
-  notice: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px',
-    borderRadius: 10, marginBottom: 18, fontSize: 13, border: '1px solid'
-  },
-  infoNotice: { background: '#eef2ff', color: '#3730a3', borderColor: '#c7d2fe' },
-  errorNotice: { background: '#fef2f2', color: '#991b1b', borderColor: '#f87171' },
-  error: { color: '#dc2626', fontSize: 13, margin: '4px 0 12px', fontWeight: 500 },
-  reportTabs: {
-    display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20
-  },
-  reportTab: {
-    display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px',
-    borderRadius: 10, border: '1px solid #e2e8f0', background: '#ffffff',
-    color: '#475569', cursor: 'pointer', fontWeight: 500, fontSize: '13px',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-  },
-  reportTabActive: {
-    borderColor: '#4f46e5', color: '#4f46e5', background: '#eef2ff',
-    fontWeight: 700, boxShadow: '0 2px 6px rgba(79,70,229,0.15)'
-  },
-  dateBadge: {
-    background: '#f1f5f9', padding: '4px 8px', borderRadius: 6, fontSize: '12px', color: '#334155', fontWeight: 500
-  },
-  typeBadge: {
-    background: '#e2e8f0', padding: '3px 8px', borderRadius: 6, fontSize: '11px', color: '#1e293b', fontWeight: 600, display: 'inline-block'
-  },
-  statusBadge: {
-    background: '#ecfdf5', color: '#065f46', padding: '3px 8px', borderRadius: 6, fontSize: '11px', fontWeight: 600, border: '1px solid #a7f3d0'
-  },
-  footer: {
-    display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap',
-    gap: 10, padding: '18px 28px', background: '#ffffff',
-    borderTop: '1px solid #e2e8f0', color: '#64748b', fontSize: 12
-  }
+  loginTitle: { fontSize: 28, fontWeight: 800, textAlign: 'center', margin: 0, color: '#f8fbff', letterSpacing: '-0.04em' },
+  loginSubtitle: { textAlign: 'center', margin: '-10px 0 0', color: '#ff67b2', fontWeight: 700, fontSize: 14 },
+  loginSubText: { textAlign: 'center', margin: '-14px 0 10px', color: '#9babca', fontSize: 13 },
+  demoBadge: { background: '#0a1120', padding: '10px', borderRadius: 9, textAlign: 'center', fontSize: 12, color: '#a8b6d2', border: '1px solid #252b49' },
+  appShell: { minHeight: '100vh', display: 'flex', background: '#07090e', color: '#eef3ff', fontFamily: "'Noto Sans Devanagari', 'Noto Sans', Inter, Arial, sans-serif" },
+  sidebar: { width: 286, background: 'linear-gradient(180deg, #0d1322 0%, #090d17 100%)', color: '#b7c4dc', padding: '20px 16px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 14, flexShrink: 0, borderRight: '1px solid #232642' },
+  sidebarOpen: { position: 'fixed', inset: '0 auto 0 0', zIndex: 30, width: 286, overflowY: 'auto', boxShadow: '10px 0 40px rgba(0,0,0,0.65)' },
+  mobileOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 25, backdropFilter: 'blur(3px)' },
+  brand: { display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px 14px', borderBottom: '1px solid #252640' },
+  brandIconBox: { width: 38, height: 38, borderRadius: 11, background: 'linear-gradient(135deg, #ff4fa3 0%, #8b5cf6 55%, #22c7ff 100%)', display: 'grid', placeItems: 'center', boxShadow: '0 6px 22px rgba(182,67,210,.24)' },
+  workspace: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'linear-gradient(135deg, #161d30, #101726)', borderRadius: 11, fontSize: 13, border: '1px solid #2b2a4c' },
+  workspaceIcon: { display: 'grid', placeItems: 'center', width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #682e95, #35316e)', color: '#fff', fontWeight: 800, fontSize: 12, border: '1px solid #7c3fa3' },
+  navScroll: { overflowY: 'auto', flex: 1, paddingRight: '2px' },
+  navTitle: { padding: '16px 8px 6px', fontSize: 10, color: '#7183a5', textTransform: 'uppercase', letterSpacing: '.09em', fontWeight: 800 },
+  navButton: { display: 'flex', alignItems: 'center', gap: 11, width: '100%', padding: '11px 12px', border: '1px solid transparent', borderRadius: 9, color: '#a7b5cf', background: 'transparent', textAlign: 'left', cursor: 'pointer', marginBottom: 4, fontSize: 13, fontWeight: 500, transition: 'all 0.18s ease' },
+  navActive: { background: 'linear-gradient(100deg, rgba(255,79,163,.17), rgba(100,62,160,.17))', color: '#ff71b8', fontWeight: 700, border: '1px solid rgba(255,79,163,.27)', boxShadow: 'inset 3px 0 0 #ff4fa3, 0 6px 20px rgba(0,0,0,.12)' },
+  userCard: { display: 'flex', alignItems: 'center', gap: 10, padding: '11px 9px', background: 'linear-gradient(135deg, #171d30, #0f1524)', borderRadius: 12, border: '1px solid #292746' },
+  avatar: { width: 38, height: 38, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'linear-gradient(135deg, #ee4caa, #874ee5)', color: '#fff', fontWeight: 800, flexShrink: 0, fontSize: 14, boxShadow: '0 4px 15px rgba(236,72,153,.18)' },
+  logoutButton: { background: 'transparent', color: '#ff6b86', border: 0, padding: 6, cursor: 'pointer', borderRadius: 6, display: 'grid', placeItems: 'center', transition: 'color 0.2s' },
+  iconButton: { display: 'inline-grid', placeItems: 'center', background: '#101727', color: '#b7c4dc', border: '1px solid #292d4d', borderRadius: 9, padding: 8, cursor: 'pointer', boxShadow: '0 3px 8px rgba(0,0,0,.13)' },
+  mainContent: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', background: '#07090e' },
+  topbar: { display: 'flex', alignItems: 'center', gap: 14, minHeight: 68, background: 'rgba(8,11,18,.96)', borderBottom: '1px solid #22253f', padding: '10px 28px', boxSizing: 'border-box', boxShadow: '0 4px 20px rgba(0,0,0,.12)' },
+  searchContainer: { display: 'flex', alignItems: 'center', gap: 8, background: '#0d1422', border: '1px solid #282c4a', borderRadius: 10, padding: '9px 12px', maxWidth: 320, width: '100%' },
+  searchInput: { border: 0, outline: 0, background: 'transparent', minWidth: 0, width: '100%', fontSize: 13, color: '#f2f5ff' },
+  contentArea: { padding: 28, flex: 1, width: '100%', maxWidth: 1700, boxSizing: 'border-box', margin: '0 auto' },
+  pageHeading: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 24 },
+  eyebrow: { color: '#ff5aa9', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', marginBottom: 7, letterSpacing: '0.045em' },
+  h1: { fontSize: 27, margin: '0 0 6px', letterSpacing: '-.035em', color: '#f6f8ff', fontWeight: 800 },
+  subtitle: { color: '#9baaca', fontSize: 14, margin: 0, lineHeight: 1.7 },
+  metricsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: 18, marginBottom: 24 },
+  metricCard: { background: 'linear-gradient(145deg, #111827 0%, #0c1220 100%)', border: '1px solid #292747', borderRadius: 20, padding: 22, boxShadow: '0 12px 30px rgba(0,0,0,.16)', minWidth: 0, transition: 'transform 0.2s, box-shadow 0.2s' },
+  metricTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  metricTitleText: { fontSize: 13, color: '#b0bdd5', fontWeight: 700 },
+  metricIcon: { width: 42, height: 42, display: 'grid', placeItems: 'center', borderRadius: 13, flexShrink: 0, border: '1px solid rgba(255,255,255,.07)' },
+  metricValue: { fontSize: 25, fontWeight: 800, margin: '14px 0 6px', overflowWrap: 'anywhere', color: '#f6f8ff', letterSpacing: '-0.025em' },
+  metricNote: { color: '#8da0bf', fontSize: 12, lineHeight: 1.6 },
+  panel: { background: 'linear-gradient(145deg, #101827 0%, #0b1120 100%)', border: '1px solid #292747', borderRadius: 20, padding: 25, marginBottom: 24, minWidth: 0, boxShadow: '0 14px 36px rgba(0,0,0,.17)' },
+  panelHeading: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', marginBottom: 18 },
+  panelTitle: { fontSize: 18, fontWeight: 800, color: '#f3f6ff', margin: 0, letterSpacing: '-0.02em' },
+  panelDesc: { fontSize: 13, color: '#94a5c2', margin: '4px 0 0', lineHeight: 1.6 },
+  countBadge: { borderRadius: 20, padding: '5px 12px', background: 'rgba(255,79,163,.12)', color: '#ff6cb7', fontSize: 12, fontWeight: 800, border: '1px solid rgba(255,79,163,.34)' },
+  tableWrap: { width: '100%', overflowX: 'auto', borderRadius: 12, border: '1px solid #262848' },
+  table: { width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 700, textAlign: 'left', background: '#0b1120' },
+  emptyCell: { textAlign: 'center', padding: 40, color: '#8d9fbd', fontStyle: 'italic' },
+  label: { display: 'grid', gap: 7, marginBottom: 16, fontSize: 13, fontWeight: 700, color: '#c3cee4' },
+  input: { width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '11px 14px', border: '1px solid #2b3152', borderRadius: 10, background: '#0a1120', color: '#f2f5ff', fontSize: '13px', outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s' },
+  selectInput: { width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '11px 14px', border: '1px solid #2b3152', borderRadius: 10, background: '#0a1120', color: '#f2f5ff', fontSize: '13px', outline: 'none', cursor: 'pointer' },
+  formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 18 },
+  primaryButton: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px 20px', border: '1px solid rgba(34,199,255,.35)', borderRadius: 10, background: 'linear-gradient(135deg, #146a91 0%, #3b2b73 100%)', color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: '14px', boxShadow: '0 7px 20px rgba(34,199,255,.12)', transition: 'all 0.2s' },
+  secondaryButton: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 16px', border: '1px solid #303453', borderRadius: 10, background: '#111827', color: '#cad5e9', cursor: 'pointer', fontWeight: 700, fontSize: '13px', transition: 'background 0.2s' },
+  dangerButton: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 8, border: '1px solid rgba(255,94,112,.35)', borderRadius: 8, color: '#ff7283', background: 'rgba(255,94,112,.1)', cursor: 'pointer', transition: 'background 0.2s' },
+  disabledDangerButton: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 8, border: '1px solid #252b43', borderRadius: 8, color: '#697995', background: '#111827', cursor: 'not-allowed', opacity: 0.6 },
+  balanceStatus: { display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderRadius: 11, margin: '20px 0', fontWeight: 700, fontSize: 13, border: '1px solid rgba(34,199,255,.26)', background: 'rgba(34,199,255,.08)', color: '#a9eaff' },
+  notice: { display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderRadius: 10, marginBottom: 18, fontSize: 13, border: '1px solid' },
+  infoNotice: { background: 'rgba(34,199,255,.08)', color: '#a9eaff', borderColor: 'rgba(34,199,255,.28)' },
+  errorNotice: { background: 'rgba(255,94,112,.1)', color: '#ffc3cb', borderColor: 'rgba(255,94,112,.35)' },
+  error: { color: '#ff7c8b', fontSize: 13, margin: '4px 0 12px', fontWeight: 600 },
+  reportTabs: { display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
+  reportTab: { display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 10, border: '1px solid #2a2e4d', background: '#101727', color: '#b5c2da', cursor: 'pointer', fontWeight: 700, fontSize: '13px', boxShadow: '0 2px 7px rgba(0,0,0,.12)' },
+  reportTabActive: { borderColor: 'rgba(255,79,163,.55)', color: '#ff71b8', background: 'rgba(255,79,163,.12)', fontWeight: 800, boxShadow: '0 3px 12px rgba(255,79,163,.08)' },
+  dateBadge: { background: 'rgba(105,84,201,.20)', padding: '4px 8px', borderRadius: 7, fontSize: '12px', color: '#d9d2ff', fontWeight: 700, border: '1px solid rgba(136,121,255,.28)' },
+  typeBadge: { background: 'rgba(34,199,255,.12)', padding: '4px 8px', borderRadius: 7, fontSize: '11px', color: '#55d7ff', fontWeight: 800, display: 'inline-block', border: '1px solid rgba(34,199,255,.25)' },
+  statusBadge: { background: 'rgba(21,217,162,.12)', color: '#3ee7ba', padding: '4px 9px', borderRadius: 8, fontSize: '11px', fontWeight: 800, border: '1px solid rgba(21,217,162,.25)' },
+  footer: { display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, padding: '18px 28px', background: '#090d17', borderTop: '1px solid #222640', color: '#8da0bf', fontSize: 12 }
 };
