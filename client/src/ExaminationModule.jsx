@@ -57,8 +57,24 @@ function gradeModelLabel(model, language) {
   return map[model]?.[language === 'ne' ? 0 : 1] || model;
 }
 function gradeFromClass(value) {
-  const m = String(value || '').match(/\d+/);
-  return m ? Number(m[0]) : null;
+  const raw = normalizeDigits(String(value || '').trim().toLowerCase());
+  if (!raw) return null;
+  const numeric = raw.match(/(?:^|\D)(10|[4-9])(?:\D|$)/);
+  if (numeric) return Number(numeric[1]);
+  const normalized = raw
+    .replace(/^(class|grade)\s*/, '')
+    .replace(/^कक्षा\s*/, '')
+    .trim();
+  const namedGrades = {
+    four: 4, fourth: 4, चार: 4,
+    five: 5, fifth: 5, पाँच: 5, पांच: 5,
+    six: 6, sixth: 6, छ: 6, छह: 6,
+    seven: 7, seventh: 7, सात: 7,
+    eight: 8, eighth: 8, आठ: 8,
+    nine: 9, ninth: 9, नौ: 9,
+    ten: 10, tenth: 10, दश: 10, दस: 10
+  };
+  return namedGrades[normalized] ?? namedGrades[raw] ?? null;
 }
 function fmtMoney(value) {
   if (value === null || value === undefined || value === '') return '—';
@@ -299,8 +315,21 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const selectedPrintStudent = details?.students?.find(s => String(s.id) === String(selectedPrintStudentId)) || null;
   const gradeSubjects = subjects.filter(s => Number(s.grade) === Number(examForm.grade));
   const competencySubjects = subjects.filter(s => Number(s.grade) === Number(competencyForm.grade));
-  const availableClasses = [...new Set(students.filter(s => gradeFromClass(s.class_name) === Number(examForm.grade)).map(s => s.class_name))].sort();
-  const availableSections = [...new Set(students.filter(s => s.class_name === examForm.className && gradeFromClass(s.class_name) === Number(examForm.grade)).map(s => s.section).filter(Boolean))].sort();
+  // Class and section choices come only from existing active student records.
+  // Never fall back to a free-text field: real data uses names such as Four/Five as well as numeric labels.
+  const activeStudents = students.filter(s => s.is_active !== false);
+  const availableClasses = [...new Set(
+    activeStudents
+      .filter(s => gradeFromClass(s.class_name) === Number(examForm.grade))
+      .map(s => String(s.class_name || '').trim())
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  const availableSections = [...new Set(
+    activeStudents
+      .filter(s => String(s.class_name || '').trim() === String(examForm.className || '').trim() && gradeFromClass(s.class_name) === Number(examForm.grade))
+      .map(s => String(s.section || '').trim())
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   const canEdit = ['admin', 'exam_coordinator', 'teacher'].includes(roles.find(r => r.user_email?.toLowerCase() === user?.email?.toLowerCase() && r.is_active)?.role);
   const isAdmin = roles.find(r => r.user_email?.toLowerCase() === user?.email?.toLowerCase() && r.is_active)?.role === 'admin';
 
@@ -315,6 +344,12 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const addCompetency = (e) => { e.preventDefault(); run(async () => { await api('/api/exams/competencies', { method: 'POST', body: competencyForm }); setCompetencyForm(v => ({ ...v, competencyCode: '', descriptionEn: '', descriptionNe: '', sourceGuideline: '', sourceReference: '' })); }, lang === 'ne' ? 'सिकाइ उपलब्धि थपियो।' : 'Competency added.'); };
   const addLevel = (e) => { e.preventDefault(); run(async () => { await api('/api/exams/achievement-levels', { method: 'POST', body: levelForm }); setLevelForm(v => ({ ...v, levelCode: '', nameEn: '', nameNe: '', descriptionEn: '', descriptionNe: '', sourceGuideline: '', isOfficiallyVerified: false })); }, lang === 'ne' ? 'उपलब्धि स्तर थपियो।' : 'Achievement level added.'); };
   const createExam = (e) => { e.preventDefault(); run(async () => {
+    if (!availableClasses.includes(String(examForm.className || '').trim())) {
+      throw new Error(lang === 'ne' ? 'विद्यार्थीको रेकर्डबाट कक्षा छान्नुहोस्।' : 'Choose a class from existing student records.');
+    }
+    if (examForm.section && !availableSections.includes(String(examForm.section).trim())) {
+      throw new Error(lang === 'ne' ? 'विद्यार्थीको रेकर्डबाट सेक्सन छान्नुहोस्।' : 'Choose a section from existing student records.');
+    }
     const examDate = examForm.examDateBs ? fromBS(examForm.examDateBs) : null;
     if (examForm.examDateBs && !examDate) throw new Error('परीक्षा मिति वि.सं. मा मिलेन।');
     const model = gradeModel(examForm.grade);
@@ -716,8 +751,28 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
           {panel(t('createExam'), lang === 'ne' ? 'कक्षा ४–५ को template सिकाइ उपलब्धि केन्द्रित हुन्छ; ६–८ विषयगत र ९–१० औपचारिक मार्कसिट template हो।' : 'Template is grade-specific. Grading thresholds are not assumed.', <form onSubmit={createExam} className="ex-grid">
             {field(t('selectYear'),select(examForm.academicYearId,v=>setExamForm(f=>({...f,academicYearId:v})),years.map(y=>({value:y.id,label:y.year_name})),t('select')))}
             {field(t('grade'),select(examForm.grade,v=>{const g=Number(v);setExamForm(f=>({...f,grade:g,className:'',section:''}));},GRADES.map(g=>({value:g,label:`${lang==='ne'?'कक्षा':'Grade'} ${g}`}))))}
-            {field(t('className'), availableClasses.length ? select(examForm.className,v=>setExamForm(f=>({...f,className:v,section:''})),availableClasses.map(c=>({value:c,label:c}))) : input(examForm.className,v=>setExamForm(f=>({...f,className:v})),{required:true,placeholder:'Class 4'}), lang==='ne'?'Existing student records बाट list बनाइएको हो।':'Options come from existing student records.')}
-            {field(t('section'),availableSections.length?select(examForm.section,v=>setExamForm(f=>({...f,section:v})),availableSections.map(x=>({value:x,label:x})),t('all')):input(examForm.section,v=>setExamForm(f=>({...f,section:v})),{placeholder:'A'}))}
+            {field(
+              t('className'),
+              select(
+                examForm.className,
+                v => setExamForm(f => ({ ...f, className: v, section: '' })),
+                availableClasses.map(c => ({ value: c, label: c })),
+                availableClasses.length ? t('select') : (lang === 'ne' ? 'यस कक्षाका सक्रिय विद्यार्थी भेटिएनन्' : 'No active students found for this grade'),
+                availableClasses.length === 0
+              ),
+              lang === 'ne' ? 'विद्यार्थीको दर्ता भएका कक्षा मात्र उपलब्ध छन्; यहाँ नाम टाइप गर्न मिल्दैन।' : 'Only classes found in active student records are available; free-text entry is disabled.'
+            )}
+            {field(
+              t('section'),
+              select(
+                examForm.section,
+                v => setExamForm(f => ({ ...f, section: v })),
+                availableSections.map(x => ({ value: x, label: x })),
+                t('all'),
+                !examForm.className || availableClasses.length === 0
+              ),
+              lang === 'ne' ? 'विद्यार्थीको रेकर्डबाट सेक्सन छान्नुहोस्; “सबै” छानेमा उक्त कक्षाका सबै सेक्सन समेटिन्छन्।' : 'Choose a section from student records; “All” includes every section of the selected class.'
+            )}
             {field(t('examNameEn'),input(examForm.examNameEn,v=>setExamForm(f=>({...f,examNameEn:v})),{required:true}))}
             {field(t('examNameNe'),input(examForm.examNameNe,v=>setExamForm(f=>({...f,examNameNe:v})),{required:true}))}
             {field(t('examType'),select(examForm.examType,v=>setExamForm(f=>({...f,examType:v})),[{value:'unit',label:'Unit Test'},{value:'terminal',label:'Terminal'},{value:'annual',label:'Annual'},{value:'final',label:'Final'},{value:'practical',label:'Practical'},{value:'other',label:'Other'}]))}
