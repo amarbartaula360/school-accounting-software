@@ -83,6 +83,44 @@ function fromBS(dateString) {
   }
 }
 
+const BS_MONTH_NAMES = [
+  'वैशाख', 'जेठ', 'असार', 'साउन', 'भदौ', 'असोज',
+  'कात्तिक', 'मंसिर', 'पुस', 'माघ', 'फागुन', 'चैत'
+];
+
+function formatBSMonth(value) {
+  const normalized = normalizeDateDigits(value).trim().replaceAll('/', '-');
+  const match = normalized.match(/^(\d{4})-(\d{1,2})$/);
+  if (!match) return '';
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return '';
+  return `${BS_MONTH_NAMES[month - 1]} ${toNepaliDigits(match[1])}`;
+}
+
+function formatBSDateLabel(adDate) {
+  const bsDate = toBS(String(adDate ?? '').slice(0, 10));
+  const match = normalizeDateDigits(bsDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '—';
+  return `${toNepaliDigits(match[3])} ${BS_MONTH_NAMES[Number(match[2]) - 1]} ${toNepaliDigits(match[1])}`;
+}
+
+function getBSMonthRange(value) {
+  const normalized = normalizeDateDigits(value).trim().replaceAll('/', '-');
+  const match = normalized.match(/^(\d{4})-(\d{1,2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  const start = fromBS(`${year}-${String(month).padStart(2, '0')}-01`);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextStart = fromBS(`${nextYear}-${String(nextMonth).padStart(2, '0')}-01`);
+  if (!start || !nextStart) return null;
+  const endDate = new Date(`${nextStart}T00:00:00.000Z`);
+  endDate.setUTCDate(endDate.getUTCDate() - 1);
+  return { start, end: endDate.toISOString().slice(0, 10) };
+}
+
 function normalizeAccount(account) {
   return {
     id: Number(account.id),
@@ -1736,8 +1774,8 @@ function StudentFees({ accounts, onRefreshAccounts }) {
   const [isMonthly, setIsMonthly] = useState(true);
 
   const [billStudentId, setBillStudentId] = useState('');
-  const [billMonth, setBillMonth] = useState(getTodayAD().slice(0, 7));
-  const [billDueDate, setBillDueDate] = useState('');
+  const [billMonthBS, setBillMonthBS] = useState(() => (toBS(getTodayAD()) || '2083-01-01').slice(0, 7));
+  const [billDueDateBS, setBillDueDateBS] = useState('');
   const [selectedBillItems, setSelectedBillItems] = useState([]);
   const [selectedBillFilterMonth, setSelectedBillFilterMonth] = useState('');
 
@@ -1822,6 +1860,18 @@ function StudentFees({ accounts, onRefreshAccounts }) {
 
   useEffect(() => { reloadAll(); }, []);
 
+  // Preselect active monthly fee titles using their default rates. The user can
+  // still uncheck a title or edit its amount before generating a batch.
+  useEffect(() => {
+    if (!feeTitles.length) return;
+    setSelectedBillItems(current => {
+      if (current.length) return current;
+      return feeTitles
+        .filter(title => title.is_active !== false && title.is_monthly && Number(title.default_amount) > 0)
+        .map(title => ({ feeTitleId: Number(title.id), amount: String(title.default_amount) }));
+    });
+  }, [feeTitles]);
+
   const incomeAccounts = accounts.filter(a => a.type === 'income' && !a.isGroup && a.isActive !== false);
   const assetAccounts = accounts.filter(a => a.type === 'asset' && !a.isGroup && a.isActive !== false);
   const matchingPaymentAccounts = assetAccounts.filter(a => paymentMethod === 'cash'
@@ -1836,6 +1886,17 @@ function StudentFees({ accounts, onRefreshAccounts }) {
     `${(s.reg_no || s.admission_no)} ${s.student_name} ${s.class_name} ${s.section} ${s.roll_number}`
       .toLowerCase().includes(studentSearch.toLowerCase()));
   const selectedBillTotal = selectedBillItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const todayBSMonth = (toBS(getTodayAD()) || '2083-01-01').slice(0, 7);
+  const currentBSYear = Number(todayBSMonth.slice(0, 4)) || 2083;
+  const bsYearOptions = Array.from({ length: 16 }, (_, index) => currentBSYear - 10 + index);
+  const normalizedBillMonthBS = normalizeDateDigits(billMonthBS).trim();
+  const [billMonthYearPart = String(currentBSYear), billMonthNumberPart = '01'] = normalizedBillMonthBS.split('-');
+  const billMonthRange = getBSMonthRange(normalizedBillMonthBS);
+  const billMonthAD = billMonthRange?.start || '';
+  const filteredBills = bills.filter(b => {
+    if (!selectedBillFilterMonth) return true;
+    return (toBS(String(b.fee_month).slice(0, 10)) || '').slice(0, 7) === selectedBillFilterMonth;
+  });
 
   const feeDashboardPayments = (feeDashboardData?.payments || []).filter(payment => {
     const searchText = `${payment.receipt_number || ''} ${payment.student_name || ''} ${payment.reg_no || payment.admission_no || ''} ${payment.guardian_name || ''} ${payment.guardian_phone || ''}`.toLowerCase();
@@ -2228,20 +2289,49 @@ function StudentFees({ accounts, onRefreshAccounts }) {
     event.preventDefault();
     setSaving(true); setError(''); setSuccess('');
     try {
-      if (!billStudentId) throw new Error('पहिले विद्यार्थी दर्ता गर्नुहोस्।');
+      if (!billStudentId) throw new Error('पहिले विद्यार्थी छान्नुहोस्।');
       if (!selectedBillItems.length) throw new Error('कम्तीमा एउटा Fee Title छान्नुहोस्।');
+      if (!billMonthAD) throw new Error('कृपया सही नेपाली वर्ष र महिना छान्नुहोस्।');
+      const dueDate = billDueDateBS.trim() ? fromBS(billDueDateBS) : null;
+      if (billDueDateBS.trim() && !dueDate) throw new Error('Due Date वि.सं. YYYY-MM-DD ढाँचामा सही लेख्नुहोस्।');
       const result = await request('/api/fee/bills', {
         method: 'POST',
         body: JSON.stringify({
           organizationId: ORGANIZATION_ID,
           studentId: Number(billStudentId),
-          feeMonth: `${billMonth}-01`,
-          dueDate: billDueDate || null,
+          feeMonth: billMonthRange.start,
+          feeMonthEnd: billMonthRange.end,
+          dueDate,
           items: selectedBillItems.map(item => ({ feeTitleId: Number(item.feeTitleId), amount: Number(item.amount) }))
         })
       });
-      setSuccess(`Monthly Bill ${result.bill.bill_number} तयार भयो। जम्मा: ${money(result.bill.total_amount)}।`);
+      setSuccess(`${formatBSMonth(billMonthBS)} महिनाको Bill ${result.bill.bill_number} तयार भयो। जम्मा: ${money(result.bill.total_amount)}।`);
       setSelectedBillItems([]);
+      await reloadAll();
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function createMonthlyBillsForAll() {
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      if (!billMonthAD) throw new Error('कृपया सही नेपाली वर्ष र महिना छान्नुहोस्।');
+      if (!selectedBillItems.length) throw new Error('सबै विद्यार्थीको bill बनाउन पहिले कम्तीमा एउटा Fee Title छान्नुहोस्।');
+      const dueDate = billDueDateBS.trim() ? fromBS(billDueDateBS) : null;
+      if (billDueDateBS.trim() && !dueDate) throw new Error('Due Date वि.सं. YYYY-MM-DD ढाँचामा सही लेख्नुहोस्।');
+      const confirmed = window.confirm(`${formatBSMonth(billMonthBS)} महिनाका लागि ${activeStudents.length} सक्रिय विद्यार्थीमध्ये पहिले bill नबनेका विद्यार्थीको bill बनाइनेछ। चयन गरिएका Fee Titles/रकम सबै विद्यार्थीमा लागू हुन्छन्। अघि बढ्ने?`);
+      if (!confirmed) return;
+      const result = await request('/api/fee/bills/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          organizationId: ORGANIZATION_ID,
+          feeMonth: billMonthRange.start,
+          feeMonthEnd: billMonthRange.end,
+          dueDate,
+          items: selectedBillItems.map(item => ({ feeTitleId: Number(item.feeTitleId), amount: Number(item.amount) }))
+        })
+      });
+      setSuccess(`${formatBSMonth(billMonthBS)} महिनाको bill प्रक्रिया पूरा भयो: ${result.createdCount} नयाँ bill, ${result.skippedCount} पहिले नै bill बनेका विद्यार्थी skip भए। नयाँ bill को जम्मा ${money(result.totalBilledAmount)}।`);
       await reloadAll();
     } catch (e) { setError(e.message); }
     finally { setSaving(false); }
@@ -2557,7 +2647,7 @@ function StudentFees({ accounts, onRefreshAccounts }) {
             {panelHeader('Ledger & Billing / बिल तथा भुक्तानी', 'Current Due, bill history र payment history।', <button type="button" style={styles.primaryButton} onClick={() => { setBillStudentId(String(profileStudentId)); setTab('Monthly Bill'); }}><Plus size={15} /> Generate Bill</button>)}
             {(() => { const sbills = bills.filter(b => String(b.student_id) === String(profileStudentId)); const sreceipts = receipts.filter(r => String(r.student_id) === String(profileStudentId)); const billed = sbills.reduce((sum, b) => sum + Number(b.total_amount || 0), 0); const received = sreceipts.reduce((sum, r) => sum + Number(r.total_amount || 0), 0); const due = Math.max(0, billed - received); return <>
               <div style={styles.metricsGrid}><Metric title="Current Due / बाँकी" value={money(due)} note={`${sbills.length} bills`} icon={<AlertCircle size={19} />} color="#d97706" bg="#fef3c7" /><Metric title="Billed / बिल" value={money(billed)} note="कुल billing" icon={<FileText size={19} />} color="#4f46e5" bg="#eef2ff" /><Metric title="Received / प्राप्त" value={money(received)} note={`${sreceipts.length} receipts`} icon={<Wallet size={19} />} color="#059669" bg="#d1fae5" /></div>
-              <h3 style={{ fontSize: 14 }}>Bill History</h3><div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Bill No', 'Month (BS/AD)', 'Billed', 'Received', 'Due', 'Status'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{sbills.map(b => <tr key={b.id}><td style={{ padding: 10 }}>{b.bill_number}</td><td style={{ padding: 10 }}><strong>{toBS(String(b.fee_month).slice(0, 10))}</strong><small style={{ display: 'block', color: '#64748b' }}>{String(b.fee_month).slice(0, 10)}</small></td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.total_amount)}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.total_received)}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.balance_due)}</td><td style={{ padding: 10 }}>{b.status}</td></tr>)}{!sbills.length && <tr><td colSpan="6" style={styles.emptyCell}>Bill छैन। Generate Bill प्रयोग गर्नुहोस्।</td></tr>}</tbody></table></div>
+              <h3 style={{ fontSize: 14 }}>Bill History</h3><div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Bill No', 'Month (BS/AD)', 'Billed', 'Received', 'Due', 'Status'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{sbills.map(b => <tr key={b.id}><td style={{ padding: 10 }}>{b.bill_number}</td><td style={{ padding: 10 }}><strong>{formatBSMonth((toBS(String(b.fee_month).slice(0, 10)) || '').slice(0, 7)) || '—'}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatBSDateLabel(b.fee_month)}</small></td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.total_amount)}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.total_received)}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(b.balance_due)}</td><td style={{ padding: 10 }}>{b.status}</td></tr>)}{!sbills.length && <tr><td colSpan="6" style={styles.emptyCell}>Bill छैन। Generate Bill प्रयोग गर्नुहोस्।</td></tr>}</tbody></table></div>
               <h3 style={{ fontSize: 14, marginTop: 20 }}>Payment History</h3><div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Receipt No', 'Date (BS/AD)', 'Mode', 'Paid To', 'Amount', 'Receipt'].map(h => <th key={h} style={{ padding: 10, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>{sreceipts.map(r => <tr key={r.id}><td style={{ padding: 10 }}>{r.receipt_number}</td><td style={{ padding: 10 }}><strong>{toBS(formatDateAD(r.receipt_date))}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatDateAD(r.receipt_date)}</small></td><td style={{ padding: 10 }}>{String(r.payment_method).toUpperCase()}</td><td style={{ padding: 10 }}>{r.payment_account_name}</td><td style={{ padding: 10, textAlign: 'right' }}>{money(r.total_amount)}</td><td style={{ padding: 10 }}><button type="button" style={styles.secondaryButton} onClick={() => printStudentReceipt(r)}><Printer size={14} /> Print / PDF</button></td></tr>)}{!sreceipts.length && <tr><td colSpan="6" style={styles.emptyCell}>Payment छैन।</td></tr>}</tbody></table></div>
             </>; })()}
           </section>}
@@ -2623,29 +2713,48 @@ function StudentFees({ accounts, onRefreshAccounts }) {
 
       {tab === 'Monthly Bill' && <>
         <section style={styles.panel}>
-          {panelHeader('Generate Monthly Fee Bill', 'एक विद्यार्थीको एक महिनामा एकपटक bill बनाउन मिल्छ। Partial payment receipt बाट लिन सकिन्छ।')}
+          {panelHeader('Generate Monthly Fee Bill / मासिक शुल्क बिल', 'नेपाली शैक्षिक महिनाअनुसार bill बनाउनुहोस्। एक विद्यार्थीको bill वा सबै सक्रिय विद्यार्थीको bill एकैपटक generate गर्न सकिन्छ। एउटै विद्यार्थी/महिनाको duplicate bill स्वतः skip हुन्छ।')}
           <form onSubmit={createMonthlyBill}>
             <div style={styles.formGrid}>
-              {selectField('विद्यार्थी *', billStudentId, setBillStudentId, activeStudents.map(s => ({ value: String(s.id), label: `${(s.reg_no || s.admission_no)} · ${s.student_name} · Class ${s.class_name}-${s.section} · Roll ${s.roll_number}` })), 'विद्यार्थी छान्नुहोस्')}
-              <div><label style={styles.label}>Fee Month * / महिना (AD)<input style={styles.input} value={billMonth} onChange={e => setBillMonth(e.target.value)} required type="month" /></label><small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>नेपाली महिना (BS): {billMonth ? toBS(`${billMonth}-01`) : '—'}</small></div>
-              <div><label style={styles.label}>Due Date (AD)<input style={styles.input} value={billDueDate} onChange={e => setBillDueDate(e.target.value)} type="date" /></label><small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>नेपाली मिति (BS): {billDueDate ? toBS(billDueDate) : '—'}</small></div>
+              {selectField('एक विद्यार्थीका लागि *', billStudentId, setBillStudentId, activeStudents.map(s => ({ value: String(s.id), label: `${(s.reg_no || s.admission_no)} · ${s.student_name} · कक्षा ${s.class_name}-${s.section} · रोल ${s.roll_number}` })), 'विद्यार्थी छान्नुहोस्')}
+              <div>
+                <label style={styles.label}>नेपाली महिना (वि.सं.) *</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <select style={styles.input} value={billMonthYearPart} onChange={e => setBillMonthBS(`${e.target.value}-${String(billMonthNumberPart || '01').padStart(2, '0')}`)} required>
+                    {bsYearOptions.map(year => <option key={year} value={String(year)}>{toNepaliDigits(year)}</option>)}
+                  </select>
+                  <select style={styles.input} value={String(billMonthNumberPart || '01').padStart(2, '0')} onChange={e => setBillMonthBS(`${billMonthYearPart}-${e.target.value}`)} required>
+                    {BS_MONTH_NAMES.map((name, index) => <option key={name} value={String(index + 1).padStart(2, '0')}>{name}</option>)}
+                  </select>
+                </div>
+                <small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>छानिएको महिना: <strong>{formatBSMonth(billMonthBS) || '—'}</strong> · आन्तरिक मिति अवधि: {billMonthRange ? `${billMonthRange.start} देखि ${billMonthRange.end}` : 'मिति छान्नुहोस्'}</small>
+              </div>
+              <div>
+                <label style={styles.label}>Due Date (वि.सं.)</label>
+                <input style={styles.input} value={billDueDateBS} onChange={e => setBillDueDateBS(e.target.value)} placeholder="२०८३-०८-१५" inputMode="numeric" />
+                <small style={{ display: 'block', color: '#64748b', marginTop: -10, marginBottom: 14 }}>नेपाली मिति YYYY-MM-DD मा लेख्नुहोस्। {billDueDateBS ? `AD: ${fromBS(billDueDateBS) || 'मिति मिलेन'}` : 'खाली छोडे due date राखिँदैन।'}</small>
+              </div>
             </div>
-            <h3 style={{ fontSize: 14, margin: '14px 0', color: '#334155' }}>Bill मा समावेश गर्ने Fee Titles</h3>
+            <h3 style={{ fontSize: 14, margin: '14px 0', color: '#334155' }}>Bill मा समावेश गर्ने Fee Titles (सबै विद्यार्थीमा यही दर लागू हुन्छ)</h3>
             {!feeTitles.filter(t => t.is_active !== false).length && <Notice type="error" message="पहिले Fee Titles tab मा Fee Title बनाउनुहोस्। प्रत्येक title मा Income Ledger link हुनुपर्छ।" />}
-            <div style={styles.tableWrap}><table style={styles.table}><thead><tr><th style={{ padding: 12, background: '#f8fafc' }}>Include</th><th style={{ padding: 12, background: '#f8fafc' }}>Fee Title</th><th style={{ padding: 12, background: '#f8fafc' }}>Income Ledger</th><th style={{ padding: 12, background: '#f8fafc', textAlign: 'right' }}>Billed Amount</th></tr></thead><tbody>
+            <div style={styles.tableWrap}><table style={styles.table}><thead><tr><th style={{ padding: 12, background: '#f8fafc' }}>समावेश</th><th style={{ padding: 12, background: '#f8fafc' }}>Fee Title</th><th style={{ padding: 12, background: '#f8fafc' }}>Income Ledger</th><th style={{ padding: 12, background: '#f8fafc', textAlign: 'right' }}>बिल रकम</th></tr></thead><tbody>
               {feeTitles.filter(t => t.is_active !== false).map(t => {
                 const picked = selectedBillItems.find(item => Number(item.feeTitleId) === Number(t.id));
-                return <tr key={t.id}><td style={{ padding: 12 }}><input type="checkbox" checked={Boolean(picked)} onChange={() => toggleBillItem(t)} /></td><td style={{ padding: 12, fontWeight: 600 }}>{t.title}</td><td style={{ padding: 12 }}>{t.income_account_code} - {t.income_account_name}</td><td style={{ padding: 12, minWidth: 170 }}><input style={{ ...styles.input, marginBottom: 0, textAlign: 'right' }} type="number" min="0.01" step="0.01" disabled={!picked} value={picked?.amount ?? t.default_amount ?? ''} onChange={e => updateBillItemAmount(t.id, e.target.value)} /></td></tr>;
+                return <tr key={t.id}><td style={{ padding: 12 }}><input type="checkbox" checked={Boolean(picked)} onChange={() => toggleBillItem(t)} /></td><td style={{ padding: 12, fontWeight: 600 }}>{t.title}{t.is_monthly && <small style={{ display: 'block', color: '#64748b' }}>मासिक</small>}</td><td style={{ padding: 12 }}>{t.income_account_code} - {t.income_account_name}</td><td style={{ padding: 12, minWidth: 170 }}><input style={{ ...styles.input, marginBottom: 0, textAlign: 'right' }} type="number" min="0.01" step="0.01" disabled={!picked} value={picked?.amount ?? t.default_amount ?? ''} onChange={e => updateBillItemAmount(t.id, e.target.value)} /></td></tr>;
               })}
-            </tbody><tfoot><tr><td colSpan="3" style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>Total Bill</td><td style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>{money(selectedBillTotal)}</td></tr></tfoot></table></div>
-            <div style={{ marginTop: 18 }}><button type="submit" style={styles.primaryButton} disabled={saving || !students.length || !feeTitles.length}><FileText size={16} /> {saving ? 'Generating...' : 'Monthly Bill Generate गर्नुहोस्'}</button></div>
+            </tbody><tfoot><tr><td colSpan="3" style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>प्रति विद्यार्थी जम्मा</td><td style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>{money(selectedBillTotal)}</td></tr></tfoot></table></div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 18 }}>
+              <button type="submit" style={styles.primaryButton} disabled={saving || !billStudentId || !selectedBillItems.length || !billMonthAD}><FileText size={16} /> {saving ? 'बिल बनाउँदै...' : 'छानिएको विद्यार्थीको बिल बनाउनुहोस्'}</button>
+              <button type="button" style={styles.secondaryButton} onClick={createMonthlyBillsForAll} disabled={saving || !activeStudents.length || !selectedBillItems.length || !billMonthAD}><Users size={16} /> {saving ? 'सबैको बिल बनाउँदै...' : `${activeStudents.length} सक्रिय विद्यार्थीको बिल एकैपटक बनाउनुहोस्`}</button>
+            </div>
+            <p style={{ margin: '12px 0 0', fontSize: 12, color: '#64748b' }}>Bulk generation मा एउटै नेपाली महिना र चयन गरिएका Fee Titles/रकम सबै सक्रिय विद्यार्थीमा लागू हुन्छ। पहिले बिल बनिसकेका विद्यार्थीलाई skip गरिन्छ; उनीहरूको bill दोहोरिँदैन। कक्षा अनुसार फरक शुल्क चाहिने भए अलग fee structure आवश्यक हुन्छ।</p>
           </form>
         </section>
         <section style={styles.panel}>
-          {panelHeader('Fee Bill Register', `${bills.length} bills`, <input style={{ ...styles.input, maxWidth: 180, marginBottom: 0 }} type="month" value={selectedBillFilterMonth} onChange={e => setSelectedBillFilterMonth(e.target.value)} />)}
-          <div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Bill No', 'Month (BS/AD)', 'Reg No', 'Student', 'Class/Section', 'Billed', 'Received', 'Balance', 'Status'].map(h => <th key={h} style={{ padding: 12, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>
-            {bills.filter(b => !selectedBillFilterMonth || String(b.fee_month).slice(0, 7) === selectedBillFilterMonth).map(b => <tr key={b.id}><td style={{ padding: 12, fontWeight: 600 }}>{b.bill_number}</td><td style={{ padding: 12 }}><strong>{toBS(String(b.fee_month).slice(0, 10)) || '—'}</strong><small style={{ display: 'block', color: '#64748b' }}>{String(b.fee_month).slice(0, 7)} (AD)</small></td><td style={{ padding: 12 }}>{(b.reg_no || b.admission_no)}</td><td style={{ padding: 12 }}>{b.student_name}</td><td style={{ padding: 12 }}>{b.class_name}-{b.section} / {b.roll_number}</td><td style={{ padding: 12, textAlign: 'right' }}>{money(b.total_amount)}</td><td style={{ padding: 12, textAlign: 'right' }}>{money(b.total_received)}</td><td style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>{money(b.balance_due)}</td><td style={{ padding: 12 }}><span style={styles.typeBadge}>{b.status}</span></td></tr>)}
-            {!bills.length && <tr><td colSpan="9" style={styles.emptyCell}>Bill बनाएको छैन।</td></tr>}
+          {panelHeader('Fee Bill Register / शुल्क बिल दर्ता', `${filteredBills.length} bills`, <select aria-label="नेपाली महिना अनुसार filter" style={{ ...styles.input, maxWidth: 220, marginBottom: 0 }} value={selectedBillFilterMonth} onChange={e => setSelectedBillFilterMonth(e.target.value)}><option value="">सबै नेपाली महिना</option>{bsYearOptions.flatMap(year => BS_MONTH_NAMES.map((name, index) => { const value = `${year}-${String(index + 1).padStart(2, '0')}`; return <option key={value} value={value}>{name} {toNepaliDigits(year)}</option>; }))}</select>)}
+          <div style={styles.tableWrap}><table style={styles.table}><thead><tr>{['Bill No', 'नेपाली महिना', 'Reg No', 'विद्यार्थी', 'कक्षा/सेक्सन', 'बिल', 'तिरेको', 'बाँकी', 'Status'].map(h => <th key={h} style={{ padding: 12, background: '#f8fafc' }}>{h}</th>)}</tr></thead><tbody>
+            {filteredBills.map(b => <tr key={b.id}><td style={{ padding: 12, fontWeight: 600 }}>{b.bill_number}</td><td style={{ padding: 12 }}><strong>{formatBSMonth((toBS(String(b.fee_month).slice(0, 10)) || '').slice(0, 7)) || '—'}</strong><small style={{ display: 'block', color: '#64748b' }}>{formatBSDateLabel(b.fee_month)}</small></td><td style={{ padding: 12 }}>{(b.reg_no || b.admission_no)}</td><td style={{ padding: 12 }}>{b.student_name}</td><td style={{ padding: 12 }}>{b.class_name}-{b.section} / {b.roll_number}</td><td style={{ padding: 12, textAlign: 'right' }}>{money(b.total_amount)}</td><td style={{ padding: 12, textAlign: 'right' }}>{money(b.total_received)}</td><td style={{ padding: 12, textAlign: 'right', fontWeight: 700 }}>{money(b.balance_due)}</td><td style={{ padding: 12 }}><span style={styles.typeBadge}>{b.status}</span></td></tr>)}
+            {!filteredBills.length && <tr><td colSpan="9" style={styles.emptyCell}>यस नेपाली महिनामा Bill छैन।</td></tr>}
           </tbody></table></div>
         </section>
       </>}

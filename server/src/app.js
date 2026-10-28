@@ -995,10 +995,11 @@ app.get('/api/fee/bills', async (req, res) => {
 });
 
 app.post('/api/fee/bills', async (req, res) => {
-  const { organizationId, studentId, feeMonth, dueDate = null, items } = req.body;
+  const { organizationId, studentId, feeMonth, feeMonthEnd = feeMonth, dueDate = null, items } = req.body;
   if (
     !isValidOrganizationId(organizationId) || !isValidOrganizationId(studentId) ||
-    typeof feeMonth !== 'string' || !/^\d{4}-\d{2}-01$/.test(feeMonth) || !isValidDate(feeMonth) ||
+    typeof feeMonth !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(feeMonth) || !isValidDate(feeMonth) ||
+    typeof feeMonthEnd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(feeMonthEnd) || !isValidDate(feeMonthEnd) || feeMonthEnd < feeMonth ||
     !isValidDate(dueDate) || !Array.isArray(items) || !items.length
   ) {
     return res.status(400).json({ message: 'Student, billing month and at least one fee title with amount are required.' });
@@ -1050,8 +1051,8 @@ app.post('/api/fee/bills', async (req, res) => {
 
     const existing = await client.query(
       `SELECT id FROM public.fee_bills
-       WHERE organization_id = $1 AND student_id = $2 AND fee_month = $3::date`,
-      [Number(organizationId), Number(studentId), feeMonth]
+       WHERE organization_id = $1 AND student_id = $2 AND fee_month BETWEEN $3::date AND $4::date`,
+      [Number(organizationId), Number(studentId), feeMonth, feeMonthEnd]
     );
     if (existing.rowCount) {
       await client.query('ROLLBACK');
@@ -1093,6 +1094,181 @@ app.post('/api/fee/bills', async (req, res) => {
     }
     console.error('Create fee bill error:', err.message);
     return res.status(500).json({ message: 'Could not generate monthly bill' });
+  } finally {
+    client?.release();
+  }
+});
+
+
+// Generate monthly bills for every active student in one transaction.
+// Existing bills for the selected BS month are skipped (never duplicated).
+app.post('/api/fee/bills/bulk', async (req, res) => {
+  const { organizationId, feeMonth, feeMonthEnd = feeMonth, dueDate = null, items } = req.body;
+  if (
+    !isValidOrganizationId(organizationId) ||
+    typeof feeMonth !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(feeMonth) || !isValidDate(feeMonth) ||
+    typeof feeMonthEnd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(feeMonthEnd) || !isValidDate(feeMonthEnd) || feeMonthEnd < feeMonth ||
+    !isValidDate(dueDate) || !Array.isArray(items) || !items.length
+  ) {
+    return res.status(400).json({ message: 'नेपाली महिना, due date र कम्तीमा एउटा Fee Title/रकम आवश्यक छ।' });
+  }
+
+  const selected = [];
+  const seenTitles = new Set();
+  for (const item of items) {
+    const feeTitleId = Number(item.feeTitleId);
+    const amount = Number(item.amount);
+    if (!isValidOrganizationId(feeTitleId) || !Number.isFinite(amount) || amount <= 0 || !validMoney(amount) || seenTitles.has(feeTitleId)) {
+      return res.status(400).json({ message: 'हरेक Fee Title फरक र रकम शून्यभन्दा बढी हुनुपर्छ।' });
+    }
+    seenTitles.add(feeTitleId);
+    selected.push({ feeTitleId, amount });
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1::int, 3)', [Number(organizationId)]);
+
+    const titles = await client.query(
+      `SELECT ft.id, ft.title, ft.income_account_id
+       FROM public.fee_titles ft
+       INNER JOIN public.accounts a ON a.id = ft.income_account_id
+       WHERE ft.organization_id = $1 AND ft.is_active = TRUE
+         AND ft.id = ANY($2::bigint[])
+         AND a.organization_id = $1
+         AND LOWER(a.account_type) = 'income'
+         AND COALESCE(a.is_group, FALSE) = FALSE
+         AND COALESCE(a.is_active, TRUE) = TRUE`,
+      [Number(organizationId), selected.map(x => x.feeTitleId)]
+    );
+    if (titles.rowCount !== selected.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'कुनै Fee Title वा Income Ledger inactive/अमान्य छ।' });
+    }
+
+    const activeCountResult = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM public.fee_students
+       WHERE organization_id = $1 AND is_active = TRUE`,
+      [Number(organizationId)]
+    );
+    const activeStudentCount = Number(activeCountResult.rows[0]?.count || 0);
+    if (!activeStudentCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'यस विद्यालयमा सक्रिय विद्यार्थी छैनन्।' });
+    }
+
+    const pendingStudents = await client.query(
+      `SELECT s.id
+       FROM public.fee_students s
+       WHERE s.organization_id = $1 AND s.is_active = TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM public.fee_bills b
+           WHERE b.organization_id = $1
+             AND b.student_id = s.id
+             AND b.fee_month BETWEEN $2::date AND $3::date
+         )
+       ORDER BY s.class_name, s.section, s.roll_number, s.id
+       FOR UPDATE OF s`,
+      [Number(organizationId), feeMonth, feeMonthEnd]
+    );
+
+    const skippedCount = activeStudentCount - pendingStudents.rowCount;
+    if (!pendingStudents.rowCount) {
+      await client.query('COMMIT');
+      return res.status(200).json({
+        ok: true, feeMonth, activeStudentCount, createdCount: 0, skippedCount,
+        totalPerStudent: 0, totalBilledAmount: 0,
+        message: 'यस नेपाली महिनाका लागि सबै सक्रिय विद्यार्थीको bill पहिल्यै बनेको छ।'
+      });
+    }
+
+    const serialResult = await client.query(
+      `SELECT COALESCE(MAX(SUBSTRING(bill_number FROM '^FB-([0-9]{1,8})$')::integer), 0) + 1 AS next_serial
+       FROM public.fee_bills
+       WHERE organization_id = $1 AND bill_number ~ '^FB-[0-9]{1,8}$'`,
+      [Number(organizationId)]
+    );
+    const nextSerial = Number(serialResult.rows[0].next_serial);
+    const totalAmountCents = selected.reduce((sum, item) => sum + Math.round(item.amount * 100), 0);
+    const totalAmount = totalAmountCents / 100;
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0 || !validMoney(totalAmount)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'कुल मासिक शुल्क रकम सही छैन।' });
+    }
+
+    const insertedBills = await client.query(
+      `INSERT INTO public.fee_bills
+         (organization_id, student_id, bill_number, fee_month, bill_date, due_date, total_amount, status)
+       SELECT $1, s.id,
+              'FB-' || CASE
+                WHEN LENGTH(($4::bigint + requested.ord - 1)::text) < 5
+                  THEN LPAD(($4::bigint + requested.ord - 1)::text, 5, '0')
+                ELSE ($4::bigint + requested.ord - 1)::text
+              END,
+              $2::date, CURRENT_DATE, $3::date, $5::numeric, 'unpaid'
+       FROM UNNEST($6::bigint[]) WITH ORDINALITY AS requested(student_id, ord)
+       INNER JOIN public.fee_students s
+         ON s.id = requested.student_id
+        AND s.organization_id = $1
+        AND s.is_active = TRUE
+       ORDER BY requested.ord
+       RETURNING id, student_id, bill_number`,
+      [Number(organizationId), feeMonth, dueDate || null, nextSerial, totalAmount, pendingStudents.rows.map(row => Number(row.id))]
+    );
+
+    const titleById = new Map(titles.rows.map(title => [Number(title.id), title]));
+    const lineBillIds = [];
+    const lineTitleIds = [];
+    const lineIncomeAccountIds = [];
+    const lineTitles = [];
+    const lineAmounts = [];
+    for (const bill of insertedBills.rows) {
+      for (const item of selected) {
+        const title = titleById.get(item.feeTitleId);
+        lineBillIds.push(Number(bill.id));
+        lineTitleIds.push(Number(title.id));
+        lineIncomeAccountIds.push(Number(title.income_account_id));
+        lineTitles.push(title.title);
+        lineAmounts.push(item.amount);
+      }
+    }
+
+    await client.query(
+      `INSERT INTO public.fee_bill_lines
+         (bill_id, fee_title_id, income_account_id, title_name, amount)
+       SELECT lines.bill_id, lines.fee_title_id, lines.income_account_id, lines.title_name, lines.amount
+       FROM UNNEST($1::bigint[], $2::bigint[], $3::integer[], $4::text[], $5::numeric[])
+         AS lines(bill_id, fee_title_id, income_account_id, title_name, amount)`,
+      [lineBillIds, lineTitleIds, lineIncomeAccountIds, lineTitles, lineAmounts]
+    );
+
+    await client.query('COMMIT');
+    return res.status(201).json({
+      ok: true,
+      feeMonth,
+      activeStudentCount,
+      createdCount: insertedBills.rowCount,
+      skippedCount,
+      totalPerStudent: totalAmount,
+      totalBilledAmount: Math.round(totalAmount * insertedBills.rowCount * 100) / 100,
+      firstBillNumber: insertedBills.rows[0]?.bill_number ?? null,
+      lastBillNumber: insertedBills.rows[insertedBills.rows.length - 1]?.bill_number ?? null
+    });
+  } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErr) { console.error('Bulk bill rollback failed:', rollbackErr.message); }
+    }
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'Bill number वा विद्यार्थी/महिनाको duplicate भेटियो। कृपया reload गरी पुनः जाँच्नुहोस्।' });
+    }
+    if (err.code === '42P01') {
+      return res.status(500).json({ message: 'Student Fee tables उपलब्ध छैनन्। Migration जाँच गर्नुहोस्।' });
+    }
+    console.error('Bulk fee bill error:', err.message);
+    return res.status(500).json({ message: 'सबै सक्रिय विद्यार्थीको मासिक bill बनाउन सकिएन।' });
   } finally {
     client?.release();
   }
