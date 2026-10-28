@@ -1779,6 +1779,18 @@ async function writeExamHistory(client, { organizationId, examId = null, student
   );
 }
 
+// Grade-wide examination helper. Existing student data stores class names as Four/Five/etc.;
+// exam rows use the compatibility label "Grade N" because exam_exams.class_name is NOT NULL.
+const studentGradeSql = (column) => `CASE LOWER(TRIM(COALESCE(${column}, '')))
+  WHEN '4' THEN 4 WHEN 'four' THEN 4 WHEN 'fourth' THEN 4 WHEN 'class four' THEN 4 WHEN 'grade four' THEN 4 WHEN 'class 4' THEN 4 WHEN 'grade 4' THEN 4 WHEN 'कक्षा ४' THEN 4
+  WHEN '5' THEN 5 WHEN 'five' THEN 5 WHEN 'fifth' THEN 5 WHEN 'class five' THEN 5 WHEN 'grade five' THEN 5 WHEN 'class 5' THEN 5 WHEN 'grade 5' THEN 5 WHEN 'कक्षा ५' THEN 5
+  WHEN '6' THEN 6 WHEN 'six' THEN 6 WHEN 'sixth' THEN 6 WHEN 'class six' THEN 6 WHEN 'grade six' THEN 6 WHEN 'class 6' THEN 6 WHEN 'grade 6' THEN 6 WHEN 'कक्षा ६' THEN 6
+  WHEN '7' THEN 7 WHEN 'seven' THEN 7 WHEN 'seventh' THEN 7 WHEN 'class seven' THEN 7 WHEN 'grade seven' THEN 7 WHEN 'class 7' THEN 7 WHEN 'grade 7' THEN 7 WHEN 'कक्षा ७' THEN 7
+  WHEN '8' THEN 8 WHEN 'eight' THEN 8 WHEN 'eighth' THEN 8 WHEN 'class eight' THEN 8 WHEN 'grade eight' THEN 8 WHEN 'class 8' THEN 8 WHEN 'grade 8' THEN 8 WHEN 'कक्षा ८' THEN 8
+  WHEN '9' THEN 9 WHEN 'nine' THEN 9 WHEN 'ninth' THEN 9 WHEN 'class nine' THEN 9 WHEN 'grade nine' THEN 9 WHEN 'class 9' THEN 9 WHEN 'grade 9' THEN 9 WHEN 'कक्षा ९' THEN 9
+  WHEN '10' THEN 10 WHEN 'ten' THEN 10 WHEN 'tenth' THEN 10 WHEN 'class ten' THEN 10 WHEN 'grade ten' THEN 10 WHEN 'class 10' THEN 10 WHEN 'grade 10' THEN 10 WHEN 'कक्षा १०' THEN 10
+  ELSE NULL END`;
+
 async function fetchExamDetails(organizationId, examId) {
   const examResult = await pool.query(
     `SELECT e.*, ay.year_name
@@ -1806,10 +1818,10 @@ async function fetchExamDetails(organizationId, examId) {
       `SELECT id, organization_id, reg_no, admission_no, student_name, class_name, section, roll_number,
               guardian_name, guardian_phone, dob_bs, gender, address, photo_url
        FROM public.fee_students
-       WHERE organization_id = $1 AND is_active = TRUE AND class_name = $2
-         AND ($3::text IS NULL OR section = $3)
+       WHERE organization_id = $1 AND is_active = TRUE
+         AND (${studentGradeSql('class_name')}) = $2
        ORDER BY CASE WHEN roll_number ~ '^[0-9]+$' THEN roll_number::int END NULLS LAST, roll_number, student_name`,
-      [organizationId, exam.class_name, exam.section || null]),
+      [organizationId, Number(exam.grade)]),
     pool.query(
       `SELECT m.*, c.exam_subject_id, c.component_code, c.name_en AS component_name_en, c.name_ne AS component_name_ne,
               c.component_type, c.max_marks, ees.subject_id
@@ -1858,10 +1870,10 @@ async function fetchExamDetails(organizationId, examId) {
        FROM public.fee_student_attendance a
        JOIN public.fee_students st ON st.id=a.student_id AND st.organization_id=a.organization_id
        JOIN public.exam_academic_years ay ON ay.id=$2 AND ay.organization_id=$1
-       WHERE a.organization_id=$1 AND st.is_active=TRUE AND st.class_name=$3
-         AND ($4::text IS NULL OR st.section=$4)
+       WHERE a.organization_id=$1 AND st.is_active=TRUE
+         AND (${studentGradeSql('st.class_name')})=$3
          AND a.attendance_date BETWEEN ay.start_date AND ay.end_date
-       GROUP BY a.student_id`, [organizationId, exam.academic_year_id, exam.class_name, exam.section || null])
+       GROUP BY a.student_id`, [organizationId, exam.academic_year_id, Number(exam.grade)])
   ]);
   return {
     exam,
@@ -1886,7 +1898,7 @@ app.get('/api/exams/summary', async (req, res) => {
     const orgId = req.examActor.organizationId;
     const [exams, studentCount, yearCount, rulesCount] = await Promise.all([
       pool.query(`SELECT status, COUNT(*)::int AS count FROM public.exam_exams WHERE organization_id=$1 GROUP BY status`, [orgId]),
-      pool.query(`SELECT COUNT(*)::int AS count FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND NULLIF(regexp_replace(class_name, '[^0-9]', '', 'g'),'')::int BETWEEN 4 AND 10`, [orgId]),
+      pool.query(`SELECT COUNT(*)::int AS count FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND (${studentGradeSql('class_name')}) BETWEEN 4 AND 10`, [orgId]),
       pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_academic_years WHERE organization_id=$1`, [orgId]),
       pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE AND is_verified=TRUE`, [orgId])
     ]);
@@ -2137,20 +2149,36 @@ app.get('/api/exams', async (req, res) => {
 
 app.post('/api/exams', async (req, res) => {
   try {
-    const { academicYearId, grade, className, section = '', examNameEn, examNameNe, examType = 'terminal', examDate = null, examDateBs = '' } = req.body || {};
+    const { academicYearId, grade, examNameEn, examNameNe, examType = 'terminal', examDate = null, examDateBs = '' } = req.body || {};
     const g = Number(grade), yearId = Number(academicYearId), orgId = req.examActor.organizationId;
-    if (!isValidOrganizationId(yearId) || !Number.isInteger(g) || g < 4 || g > 10 || !String(className || '').trim() || !String(examNameEn || '').trim() || !String(examNameNe || '').trim() || !['terminal','unit','annual','final','practical','other'].includes(examType) || (examDate && !isValidDate(examDate))) return res.status(400).json({ message: 'Academic year, grade, existing class, exam names and valid date/type are required.' });
+    if (!isValidOrganizationId(yearId) || !Number.isInteger(g) || g < 4 || g > 10 || !String(examNameEn || '').trim() || !String(examNameNe || '').trim() || !['terminal','unit','annual','final','practical','other'].includes(examType) || (examDate && !isValidDate(examDate))) {
+      return res.status(400).json({ message: 'Academic year, grade, exam names and valid date/type are required.' });
+    }
     const model = examModelForGrade(g);
     const yearCheck = await pool.query('SELECT id FROM public.exam_academic_years WHERE id=$1 AND organization_id=$2', [yearId, orgId]);
     if (!yearCheck.rowCount) return res.status(400).json({ message: 'Academic year not found.' });
     const students = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND class_name=$2 AND ($3::text='' OR section=$3)`,
-      [orgId, String(className).trim(), String(section).trim()]);
-    if (!students.rows[0]?.n) return res.status(400).json({ message: 'यो class/section मा active student भेटिएन। Existing student records बाट class/section छान्नुहोस्।' });
+      `SELECT COUNT(*)::int AS n FROM public.fee_students
+       WHERE organization_id=$1 AND is_active=TRUE AND (${studentGradeSql('class_name')})=$2`,
+      [orgId, g]);
+    if (!Number(students.rows[0]?.n || 0)) return res.status(400).json({ message: 'यस कक्षामा सक्रिय विद्यार्थी भेटिएनन्। विद्यार्थीको class_name कक्षा ४–१० सँग मिल्ने गरी जाँच्नुहोस्।' });
+
+    // Prevent duplicate grade-wide draft exams with the same name/type/year.
+    const compatibilityClassName = `Grade ${g}`;
+    const existing = await pool.query(
+      `SELECT id FROM public.exam_exams
+       WHERE organization_id=$1 AND academic_year_id=$2 AND grade=$3
+         AND class_name=$4 AND section IS NULL
+         AND LOWER(TRIM(exam_name_en))=LOWER(TRIM($5))
+         AND exam_type=$6 AND status='draft'
+       LIMIT 1`,
+      [orgId, yearId, g, compatibilityClassName, String(examNameEn).trim(), examType]);
+    if (existing.rowCount) return res.status(409).json({ message: 'यस कक्षा र शैक्षिक सत्रमा यही नाम/प्रकारको Draft Exam पहिले नै छ। पुरानो परीक्षा छानेर प्रयोग गर्नुहोस्।' });
+
     const result = await pool.query(
       `INSERT INTO public.exam_exams (organization_id, academic_year_id, grade, class_name, section, exam_name_en, exam_name_ne, exam_type, assessment_model, exam_date, exam_date_bs, created_by_email)
-       VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9,$10::date,NULLIF($11,''),$12) RETURNING *`,
-      [orgId, yearId, g, String(className).trim(), String(section).trim(), String(examNameEn).trim(), String(examNameNe).trim(), examType, model, examDate || null, String(examDateBs).trim(), req.examActor.email]);
+       VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9::date,NULLIF($10,''),$11) RETURNING *`,
+      [orgId, yearId, g, compatibilityClassName, String(examNameEn).trim(), String(examNameNe).trim(), examType, model, examDate || null, String(examDateBs).trim(), req.examActor.email]);
     await pool.query(`INSERT INTO public.exam_result_history (organization_id, exam_id, actor_email, actor_role, action, new_value) VALUES ($1,$2,$3,$4,'exam_created',$5::jsonb)`, [orgId, result.rows[0].id, req.examActor.email, req.examActor.role, JSON.stringify(result.rows[0])]);
     res.status(201).json(result.rows[0]);
   } catch (err) { console.error('Create exam error:', err.message); res.status(500).json({ message: 'Could not create examination.' }); }
@@ -2235,7 +2263,7 @@ app.post('/api/exams/:examId/marks', async (req, res) => {
          JOIN public.exam_exams e ON e.id=ees.exam_id
          JOIN public.fee_students s ON s.id=$3
          WHERE c.id=$1 AND e.id=$2 AND e.organization_id=$4 AND c.organization_id=$4
-           AND s.organization_id=$4 AND s.is_active=TRUE AND s.class_name=e.class_name AND (e.section IS NULL OR s.section=e.section)`,
+           AND s.organization_id=$4 AND s.is_active=TRUE AND (${studentGradeSql('s.class_name')})=e.grade`,
         [componentId, examId, studentId, orgId]);
       if (!context.rowCount) throw Object.assign(new Error('Student or component does not belong to this exam/class.'), { status: 400 });
       const c = context.rows[0];
@@ -2275,7 +2303,7 @@ app.post('/api/exams/:examId/competency-results', async (req, res) => {
       `SELECT s.id FROM public.fee_students s JOIN public.exam_exams e ON e.id=$2
        JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.subject_id=$3
        JOIN public.exam_competencies c ON c.id=$4 AND c.subject_id=ees.subject_id AND c.grade=e.grade
-       WHERE s.id=$1 AND s.organization_id=$5 AND e.organization_id=$5 AND s.is_active=TRUE AND s.class_name=e.class_name AND (e.section IS NULL OR s.section=e.section)`,
+       WHERE s.id=$1 AND s.organization_id=$5 AND e.organization_id=$5 AND s.is_active=TRUE AND (${studentGradeSql('s.class_name')})=e.grade`,
       [sid, examId, subid, cid, orgId]);
     if (!valid.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Student, subject and competency must match the selected exam.' }); }
     if (levelId !== null) {
@@ -2305,7 +2333,7 @@ app.post('/api/exams/:examId/progress-reports', async (req, res) => {
     const exam = await client.query('SELECT * FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
     if (!exam.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
     if (!['draft','in_review'].includes(exam.rows[0].status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Approved, locked or published progress reports cannot be edited.' }); }
-    const student = await client.query('SELECT id FROM public.fee_students WHERE id=$1 AND organization_id=$2 AND is_active=TRUE AND class_name=$3 AND ($4::text IS NULL OR section=$4)', [studentId, orgId, exam.rows[0].class_name, exam.rows[0].section || null]);
+    const student = await client.query(`SELECT id FROM public.fee_students WHERE id=$1 AND organization_id=$2 AND is_active=TRUE AND (${studentGradeSql('class_name')})=$3`, [studentId, orgId, Number(exam.rows[0].grade)]);
     if (!student.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Student does not belong to this exam class.' }); }
     const fields = ['strengthsEn','strengthsNe','improvementAreasEn','improvementAreasNe','teacherCommentsEn','teacherCommentsNe','recommendationsEn','recommendationsNe','parentFeedback'];
     const text = fields.map(k => String(body[k] || '').trim());
@@ -2367,11 +2395,11 @@ app.post('/api/exams/:examId/print-history', async (req, res) => {
     if (!exam.rowCount) return res.status(404).json({ message: 'Exam not found.' });
     let count = 0, student = null;
     if (studentId) {
-      const result = await pool.query('SELECT id, student_name, reg_no, admission_no, class_name, section, roll_number FROM public.fee_students WHERE id=$1 AND organization_id=$2 AND class_name=$3 AND ($4::text IS NULL OR section=$4)', [studentId, orgId, exam.rows[0].class_name, exam.rows[0].section || null]);
+      const result = await pool.query(`SELECT id, student_name, reg_no, admission_no, class_name, section, roll_number FROM public.fee_students WHERE id=$1 AND organization_id=$2 AND (${studentGradeSql('class_name')})=$3`, [studentId, orgId, Number(exam.rows[0].grade)]);
       if (!result.rowCount) return res.status(400).json({ message: 'Student does not belong to this exam.' });
       student = result.rows[0]; count = 1;
     } else {
-      const result = await pool.query('SELECT COUNT(*)::int AS n FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND class_name=$2 AND ($3::text IS NULL OR section=$3)', [orgId, exam.rows[0].class_name, exam.rows[0].section || null]);
+      const result = await pool.query(`SELECT COUNT(*)::int AS n FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND (${studentGradeSql('class_name')})=$2`, [orgId, Number(exam.rows[0].grade)]);
       count = Number(result.rows[0]?.n || 0);
     }
     const snapshot = { exam: exam.rows[0], student, reportType, studentsCount: count, generatedBy: req.examActor.email };

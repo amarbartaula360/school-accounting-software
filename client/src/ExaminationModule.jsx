@@ -123,7 +123,7 @@ const words = {
     roster: 'Student Roster', selectSubject: 'Select Subject', selectComponent: 'Select Component', marksObtained: 'Marks Obtained', absent: 'Absent', note: 'Teacher Note', saveMarks: 'Save Marks', lockedNote: 'This exam is locked/published. Marks editing is disabled.',
     student: 'Student', competency: 'Competency / Outcome', achievement: 'Achievement Level', observation: 'Observation / Evidence', nextSteps: 'Next Learning Steps', saveCompetency: 'Save Competency Result',
     progress: 'Student Progress Details', strengths: 'Strengths', improvement: 'Areas for Improvement', teacherComments: 'Teacher Comments', recommendations: 'Parent / Follow-up Recommendations', parentFeedback: 'Parent Feedback', attendancePresent: 'Days Present', attendanceTotal: 'Total School Days', saveProgress: 'Save Progress Report',
-    printStandard: 'Print Standard Marksheet / PDF', printProgress: 'Print Detailed Progress Report / PDF', printBulk: 'Print All Class Reports', selectStudent: 'Select Student', preview: 'Report Preview', noStudents: 'No active students in this class/section.',
+    printStandard: 'Print Standard Marksheet / PDF', printProgress: 'Print Detailed Progress Report / PDF', printBulk: 'Print All Class Reports', selectStudent: 'Select Student', preview: 'Report Preview', noStudents: 'No active students in this grade.',
     gradingRules: 'Configure Grade Boundaries', minPct: 'Minimum %', maxPct: 'Maximum %', letterGrade: 'Letter Grade / Level', gradePoint: 'Grade Point', verified: 'Source verified', saveRule: 'Save Grading Rule', gpaPolicy: 'GPA / Pass Policy', gpaMethod: 'GPA Calculation Method', gpaMax: 'Maximum GPA', passRule: 'Overall Pass Rule', promotionRule: 'Promotion Rule', savePolicy: 'Save Policy', notConfigured: 'Not configured',
     sendReview: 'Submit for Review', approve: 'Approve Results', lock: 'Lock Results', publish: 'Publish Results', draftAgain: 'Return to Draft', history: 'Change History', roles: 'Role Management', userEmail: 'Teacher / User Email', role: 'Role', assignRole: 'Assign Role', deactivate: 'Deactivate',
     loading: 'Loading…', refresh: 'Refresh', search: 'Search…', saved: 'Saved.', error: 'Error', noRules: 'No grading rules. Admin must add and verify official rules before grades/GPA can be calculated.', noLevels: 'Achievement levels are not configured for this grade.',
@@ -171,7 +171,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const [subjectForm, setSubjectForm] = useState({ grade: 4, subjectCode: '', nameEn: '', nameNe: '', isPractical: false });
   const [competencyForm, setCompetencyForm] = useState({ grade: 4, subjectId: '', competencyCode: '', descriptionEn: '', descriptionNe: '', sourceGuideline: '', sourceReference: '' });
   const [levelForm, setLevelForm] = useState({ grade: 4, levelCode: '', nameEn: '', nameNe: '', descriptionEn: '', descriptionNe: '', sourceGuideline: '', isOfficiallyVerified: false, displayOrder: 1 });
-  const [examForm, setExamForm] = useState({ academicYearId: '', grade: 4, className: '', section: '', examNameEn: '', examNameNe: '', examType: 'terminal', examDateBs: todayBS() });
+  const [examForm, setExamForm] = useState({ academicYearId: '', grade: 4, examNameEn: '', examNameNe: '', examType: 'terminal', examDateBs: todayBS() });
   const [scheduleForm, setScheduleForm] = useState({ examSubjectId: '', examDateBs: todayBS(), startTime: '09:00', endTime: '10:00', roomOrVenue: '', invigilator: '' });
   const [examSubjectForm, setExamSubjectForm] = useState({ subjectId: '', fullMarks: '', passMarks: '', creditHours: '' });
   const [componentForm, setComponentForm] = useState({ examSubjectId: '', componentCode: '', nameEn: '', nameNe: '', componentType: 'continuous', maxMarks: '', passMarks: '', displayOrder: 1 });
@@ -306,6 +306,19 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
     catch (e) { setError(e.message || 'Request failed.'); }
     finally { setBusy(false); }
   };
+  const isGradeWideExam = (exam) => !exam.section && String(exam.class_name || '').trim().toLowerCase() === `grade ${Number(exam.grade)}`;
+  const displayExams = useMemo(() => {
+    const grouped = new Map();
+    for (const exam of exams) {
+      const key = [exam.academic_year_id || exam.year_name, exam.grade, exam.exam_name_en, exam.exam_type, exam.exam_date_bs || exam.exam_date || '', exam.status].join('|');
+      const previous = grouped.get(key);
+      const priority = (item) => isGradeWideExam(item) ? 2 : 1;
+      if (!previous || priority(exam) > priority(previous) || (priority(exam) === priority(previous) && Number(exam.id) > Number(previous.id))) {
+        grouped.set(key, exam);
+      }
+    }
+    return [...grouped.values()].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0) || Number(b.id) - Number(a.id));
+  }, [exams]);
   const selectedExam = details?.exam || exams.find(e => String(e.id) === String(selectedExamId)) || null;
   const editable = ['draft', 'in_review'].includes(selectedExam?.status);
   const selectedExamSubject = details?.subjects?.find(s => String(s.id) === String(selectedExamSubjectId)) || null;
@@ -315,21 +328,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const selectedPrintStudent = details?.students?.find(s => String(s.id) === String(selectedPrintStudentId)) || null;
   const gradeSubjects = subjects.filter(s => Number(s.grade) === Number(examForm.grade));
   const competencySubjects = subjects.filter(s => Number(s.grade) === Number(competencyForm.grade));
-  // Class and section choices come only from existing active student records.
-  // Never fall back to a free-text field: real data uses names such as Four/Five as well as numeric labels.
-  const activeStudents = students.filter(s => s.is_active !== false);
-  const availableClasses = [...new Set(
-    activeStudents
-      .filter(s => gradeFromClass(s.class_name) === Number(examForm.grade))
-      .map(s => String(s.class_name || '').trim())
-      .filter(Boolean)
-  )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-  const availableSections = [...new Set(
-    activeStudents
-      .filter(s => String(s.class_name || '').trim() === String(examForm.className || '').trim() && gradeFromClass(s.class_name) === Number(examForm.grade))
-      .map(s => String(s.section || '').trim())
-      .filter(Boolean)
-  )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  // Examinations are grade-wide: class names and sections are student-level details, not exam setup fields.
   const canEdit = ['admin', 'exam_coordinator', 'teacher'].includes(roles.find(r => r.user_email?.toLowerCase() === user?.email?.toLowerCase() && r.is_active)?.role);
   const isAdmin = roles.find(r => r.user_email?.toLowerCase() === user?.email?.toLowerCase() && r.is_active)?.role === 'admin';
 
@@ -344,16 +343,10 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const addCompetency = (e) => { e.preventDefault(); run(async () => { await api('/api/exams/competencies', { method: 'POST', body: competencyForm }); setCompetencyForm(v => ({ ...v, competencyCode: '', descriptionEn: '', descriptionNe: '', sourceGuideline: '', sourceReference: '' })); }, lang === 'ne' ? 'सिकाइ उपलब्धि थपियो।' : 'Competency added.'); };
   const addLevel = (e) => { e.preventDefault(); run(async () => { await api('/api/exams/achievement-levels', { method: 'POST', body: levelForm }); setLevelForm(v => ({ ...v, levelCode: '', nameEn: '', nameNe: '', descriptionEn: '', descriptionNe: '', sourceGuideline: '', isOfficiallyVerified: false })); }, lang === 'ne' ? 'उपलब्धि स्तर थपियो।' : 'Achievement level added.'); };
   const createExam = (e) => { e.preventDefault(); run(async () => {
-    if (!availableClasses.includes(String(examForm.className || '').trim())) {
-      throw new Error(lang === 'ne' ? 'विद्यार्थीको रेकर्डबाट कक्षा छान्नुहोस्।' : 'Choose a class from existing student records.');
-    }
-    if (examForm.section && !availableSections.includes(String(examForm.section).trim())) {
-      throw new Error(lang === 'ne' ? 'विद्यार्थीको रेकर्डबाट सेक्सन छान्नुहोस्।' : 'Choose a section from existing student records.');
-    }
     const examDate = examForm.examDateBs ? fromBS(examForm.examDateBs) : null;
-    if (examForm.examDateBs && !examDate) throw new Error('परीक्षा मिति वि.सं. मा मिलेन।');
+    if (examForm.examDateBs && !examDate) throw new Error(lang === 'ne' ? 'परीक्षा मिति वि.सं. मा मिलेन।' : 'Invalid Bikram Sambat exam date.');
     const model = gradeModel(examForm.grade);
-    const created = await api('/api/exams', { method: 'POST', body: { ...examForm, grade: Number(examForm.grade), examDate, examDateBs: examForm.examDateBs, assessmentModel: model } });
+    const created = await api('/api/exams', { method: 'POST', body: { ...examForm, grade: Number(examForm.grade), className: `Grade ${Number(examForm.grade)}`, section: '', examDate, examDateBs: examForm.examDateBs, assessmentModel: model } });
     setSelectedExamId(String(created.id)); setTab('exams'); setExamSubjectForm(v => ({ ...v, subjectId: '' }));
   }, lang === 'ne' ? 'परीक्षा सिर्जना भयो।' : 'Exam created.'); };
   const addExamSubject = (e) => { e.preventDefault(); if (!selectedExamId) return; run(async () => {
@@ -693,7 +686,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
           <div className="ex-kpi"><span>{t('published')}</span><strong>{summary.exams?.published || 0}</strong><small>{lang === 'ne' ? 'प्रकाशित नतिजा मात्र' : 'Published only'}</small></div>
           <div className="ex-kpi"><span>{t('verifiedRules')}</span><strong>{summary.verifiedGradingRules ?? 0}</strong><small>{lang === 'ne' ? 'नियम/दफा प्रमाणित' : 'Verified grading bands'}</small></div>
         </div>
-        {panel(t('exams'), lang === 'ne' ? 'कक्षा ४–५ मा competency-first; ६–८ मा configurable subject-wise assessment; ९–१० मा formal marksheet template।' : 'Competency-first for 4–5; configurable subject assessment for 6–8; formal marksheet for 9–10.', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('examInfo')}</th><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('model')}</th><th>{t('examStatus')}</th><th /></tr></thead><tbody>{exams.map(e => <tr key={e.id}><td><b>{lang === 'ne' ? e.exam_name_ne : e.exam_name_en}</b><small>{e.exam_date_bs || toBS(e.exam_date) || '—'} · {e.class_name}-{e.section || '—'}</small></td><td>{e.grade}</td><td>{e.year_name}</td><td>{gradeModelLabel(e.assessment_model,lang)}</td><td>{statusBadge(e.status)}</td><td>{actionBtn(t('chooseExam'), () => { setSelectedExamId(String(e.id)); setTab('exams'); })}</td></tr>)}{!exams.length && <tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
+        {panel(t('exams'), lang === 'ne' ? 'कक्षा ४–५ मा competency-first; ६–८ मा configurable subject-wise assessment; ९–१० मा formal marksheet template।' : 'Competency-first for 4–5; configurable subject assessment for 6–8; formal marksheet for 9–10.', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('examInfo')}</th><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('model')}</th><th>{t('examStatus')}</th><th /></tr></thead><tbody>{displayExams.map(e => <tr key={e.id}><td><b>{lang === 'ne' ? e.exam_name_ne : e.exam_name_en}</b><small>{e.exam_date_bs || toBS(e.exam_date) || '—'}</small></td><td>{e.grade}</td><td>{e.year_name}</td><td>{gradeModelLabel(e.assessment_model,lang)}</td><td>{statusBadge(e.status)}</td><td>{actionBtn(t('chooseExam'), () => { setSelectedExamId(String(e.id)); setTab('exams'); })}</td></tr>)}{!displayExams.length && <tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
         {panel(t('officialRules'), t('sourceWarning'), <div className="ex-list"><div><a className="ex-link" href="https://moecdc.gov.np/content/647/letter-grading-directory--2083/" target="_blank" rel="noreferrer">CDC — लेटर ग्रेडिङ निर्देशिका, २०८३</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/646/guide-to-student-assessment-in-basic-level/" target="_blank" rel="noreferrer">CDC — कक्षा ४–५ विद्यार्थी मूल्याङ्कन मार्गदर्शन, २०८३</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/608/facilitation-manual-for-conducting-projects-and-experiments/" target="_blank" rel="noreferrer">CDC — आन्तरिक मूल्याङ्कन, परियोजना तथा प्रयोगात्मक कार्य, २०८२ (कक्षा ४–८)</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/21/internal-assessment-standards-for-student-legacy--2080/" target="_blank" rel="noreferrer">CDC — विद्यार्थी सिकाइका लागि आन्तरिक मूल्याङ्कन मापदण्ड, २०८० (कक्षा ९–१२)</a></div><div><a className="ex-link" href="https://www.cehrd.gov.np/content/13339/13339-student-assessment_trm_g4-5/" target="_blank" rel="noreferrer">CEHRD — कक्षा ४–५ विद्यार्थी मूल्याङ्कन स्रोत सामग्री</a></div></div>)}
       </>}
 
@@ -750,29 +743,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
         <div className="ex-two-col">
           {panel(t('createExam'), lang === 'ne' ? 'कक्षा ४–५ को template सिकाइ उपलब्धि केन्द्रित हुन्छ; ६–८ विषयगत र ९–१० औपचारिक मार्कसिट template हो।' : 'Template is grade-specific. Grading thresholds are not assumed.', <form onSubmit={createExam} className="ex-grid">
             {field(t('selectYear'),select(examForm.academicYearId,v=>setExamForm(f=>({...f,academicYearId:v})),years.map(y=>({value:y.id,label:y.year_name})),t('select')))}
-            {field(t('grade'),select(examForm.grade,v=>{const g=Number(v);setExamForm(f=>({...f,grade:g,className:'',section:''}));},GRADES.map(g=>({value:g,label:`${lang==='ne'?'कक्षा':'Grade'} ${g}`}))))}
-            {field(
-              t('className'),
-              select(
-                examForm.className,
-                v => setExamForm(f => ({ ...f, className: v, section: '' })),
-                availableClasses.map(c => ({ value: c, label: c })),
-                availableClasses.length ? t('select') : (lang === 'ne' ? 'यस कक्षाका सक्रिय विद्यार्थी भेटिएनन्' : 'No active students found for this grade'),
-                availableClasses.length === 0
-              ),
-              lang === 'ne' ? 'विद्यार्थीको दर्ता भएका कक्षा मात्र उपलब्ध छन्; यहाँ नाम टाइप गर्न मिल्दैन।' : 'Only classes found in active student records are available; free-text entry is disabled.'
-            )}
-            {field(
-              t('section'),
-              select(
-                examForm.section,
-                v => setExamForm(f => ({ ...f, section: v })),
-                availableSections.map(x => ({ value: x, label: x })),
-                t('all'),
-                !examForm.className || availableClasses.length === 0
-              ),
-              lang === 'ne' ? 'विद्यार्थीको रेकर्डबाट सेक्सन छान्नुहोस्; “सबै” छानेमा उक्त कक्षाका सबै सेक्सन समेटिन्छन्।' : 'Choose a section from student records; “All” includes every section of the selected class.'
-            )}
+            {field(t('grade'),select(examForm.grade,v=>setExamForm(f=>({...f,grade:Number(v)})),GRADES.map(g=>({value:g,label:`${lang==='ne'?'कक्षा':'Grade'} ${g}`}))))}
             {field(t('examNameEn'),input(examForm.examNameEn,v=>setExamForm(f=>({...f,examNameEn:v})),{required:true}))}
             {field(t('examNameNe'),input(examForm.examNameNe,v=>setExamForm(f=>({...f,examNameNe:v})),{required:true}))}
             {field(t('examType'),select(examForm.examType,v=>setExamForm(f=>({...f,examType:v})),[{value:'unit',label:'Unit Test'},{value:'terminal',label:'Terminal'},{value:'annual',label:'Annual'},{value:'final',label:'Final'},{value:'practical',label:'Practical'},{value:'other',label:'Other'}]))}
@@ -780,9 +751,9 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
             <div style={{gridColumn:'1/-1'}}><span className="ex-data-chip">{t('model')}: {gradeModelLabel(gradeModel(examForm.grade),lang)}</span></div>
             <div className="ex-actions" style={{gridColumn:'1/-1'}}>{submitBtn(t('createExam'),<Plus size={15}/>)}</div>
           </form>)}
-          {panel(t('chooseExam'), '', <div className="ex-list">{exams.map(e=><div className="ex-list-item" key={e.id} style={{borderColor:String(e.id)===String(selectedExamId)?'#818cf8':undefined,background:String(e.id)===String(selectedExamId)?'rgba(255,79,163,.12)':'#101827'}}><div><strong>{lang==='ne'?e.exam_name_ne:e.exam_name_en}</strong><small>{e.year_name} · {lang==='ne'?'कक्षा':'Grade'} {e.grade} ({e.class_name}-{e.section||'—'}) · {gradeModelLabel(e.assessment_model,lang)}</small><div style={{marginTop:6}}>{statusBadge(e.status)}</div></div>{actionBtn(t('chooseExam'),()=>{setSelectedExamId(String(e.id));setTab('exams');},'secondary')}</div>)}{!exams.length&&<p className="ex-empty">{t('noRecords')}</p>}</div>)}
+          {panel(t('chooseExam'), '', <div className="ex-list">{displayExams.map(e=><div className="ex-list-item" key={e.id} style={{borderColor:String(e.id)===String(selectedExamId)?'#818cf8':undefined,background:String(e.id)===String(selectedExamId)?'rgba(255,79,163,.12)':'#101827'}}><div><strong>{lang==='ne'?e.exam_name_ne:e.exam_name_en}</strong><small>{e.year_name} · {lang==='ne'?'कक्षा':'Grade'} {e.grade} · {gradeModelLabel(e.assessment_model,lang)}</small><div style={{marginTop:6}}>{statusBadge(e.status)}</div></div>{actionBtn(t('chooseExam'),()=>{setSelectedExamId(String(e.id));setTab('exams');},'secondary')}</div>)}{!displayExams.length&&<p className="ex-empty">{t('noRecords')}</p>}</div>)}
         </div>
-        {selectedExam && panel(`${t('examInfo')}: ${lang==='ne'?selectedExam.exam_name_ne:selectedExam.exam_name_en}`, `${selectedExam.year_name} · Grade ${selectedExam.grade} · ${selectedExam.class_name}-${selectedExam.section||'—'} · ${gradeModelLabel(selectedExam.assessment_model,lang)}`, <>
+        {selectedExam && panel(`${t('examInfo')}: ${lang==='ne'?selectedExam.exam_name_ne:selectedExam.exam_name_en}`, `${selectedExam.year_name} · Grade ${selectedExam.grade} · ${gradeModelLabel(selectedExam.assessment_model,lang)}`, <>
           <div className="ex-inline" style={{marginBottom:12}}>{statusBadge(selectedExam.status)}<span className="ex-muted">{t('currentUser')}: {user?.email} · {ROLE_LABELS[currentRole]||currentRole}</span></div>
           <div className="ex-actions">
             {selectedExam.status==='draft'&&actionBtn(t('sendReview'),()=>changeExamStatus('in_review'),'primary',!isAdmin&&currentRole!=='exam_coordinator'&&currentRole!=='teacher',<FileClock size={15}/>) }
@@ -830,8 +801,8 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
       </>}
 
       {tab === 'marks' && <>
-        {!selectedExam ? panel(t('chooseExam'),t('noExam'), <div>{select(selectedExamId,v=>setSelectedExamId(v),exams.map(e=>({value:e.id,label:`${e.year_name} · Grade ${e.grade} · ${lang==='ne'?e.exam_name_ne:e.exam_name_en}`})))}</div>) : <>
-          {panel(t('marks'), `${selectedExam.year_name} · ${selectedExam.class_name}-${selectedExam.section||'—'} · ${statusLabel(selectedExam.status,lang)}`, <>
+        {!selectedExam ? panel(t('chooseExam'),t('noExam'), <div>{select(selectedExamId,v=>setSelectedExamId(v),displayExams.map(e=>({value:e.id,label:`${e.year_name} · Grade ${e.grade} · ${lang==='ne'?e.exam_name_ne:e.exam_name_en}`})))}</div>) : <>
+          {panel(t('marks'), `${selectedExam.year_name} · Grade ${selectedExam.grade} · ${statusLabel(selectedExam.status,lang)}`, <>
             {!editable&&<div className="ex-alert ex-alert-info">{t('lockedNote')}</div>}
             <div className="ex-grid-3">
               {field(t('subject'),select(selectedExamSubjectId,v=>{setSelectedExamSubjectId(v);setSelectedComponentId('');},(details?.subjects||[]).map(s=>({value:s.id,label:lang==='ne'?s.subject_name_ne:s.subject_name_en}))))}
@@ -847,7 +818,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
 
       {tab === 'reports' && <>
         {panel(t('reports'), t('printHint'), <div className="ex-grid-3">
-          {field(t('chooseExam'),select(selectedExamId,v=>setSelectedExamId(v),exams.map(e=>({value:e.id,label:`${e.year_name} · ${e.class_name}-${e.section||'—'} · ${lang==='ne'?e.exam_name_ne:e.exam_name_en}`}))))}
+          {field(t('chooseExam'),select(selectedExamId,v=>setSelectedExamId(v),displayExams.map(e=>({value:e.id,label:`${e.year_name} · Grade ${e.grade} · ${lang==='ne'?e.exam_name_ne:e.exam_name_en}`}))))}
           {field(t('selectStudent'),select(selectedPrintStudentId,v=>setSelectedPrintStudentId(v),(details?.students||[]).map(s=>({value:s.id,label:studentLabel(s)}))))}
           <div className="ex-muted" style={{alignSelf:'end'}}>{details?.students?.length||0} students · {details?.exam?statusLabel(details.exam.status,lang):'—'}</div>
         </div>)}
