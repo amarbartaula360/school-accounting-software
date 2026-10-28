@@ -44,7 +44,7 @@ function initials(studentName) {
 }
 
 function getRegNo(student) {
-  return String(student?.reg_no || student?.regNo || student?.admission_no || student?.admissionNo || '').trim();
+  return String(student?.reg_no || student?.regNo || '').trim();
 }
 
 function StudentPhoto({ src, studentName, className = '' }) {
@@ -79,8 +79,13 @@ function IdCardFace({ student, schoolName, schoolAddress, schoolPhone, logoUrl }
           <div className="id-data-line"><span>Reg No.</span><strong>{regNo || '—'}</strong></div>
           <div className="id-data-pair">
             <div><span>Class / Section</span><strong>{student.class_name || '—'} / {student.section || '—'}</strong></div>
-            <div><span>Date of Birth (B.S.)</span><strong>{displayBsDate(student.dob_bs)}</strong></div>
+            <div><span>Roll No.</span><strong>{student.roll_number || '—'}</strong></div>
           </div>
+          <div className="id-data-pair">
+            <div><span>Date of Birth (B.S.)</span><strong>{displayBsDate(student.dob_bs)}</strong></div>
+            <div><span>Gender</span><strong>{student.gender || '—'}</strong></div>
+          </div>
+          <div className="id-data-line"><span>Parent / अभिभावक</span><strong>{student.guardian_name || '—'}{student.guardian_phone ? ` · ${student.guardian_phone}` : ''}</strong></div>
           <div className="id-data-line"><span>Valid Upto (B.S.)</span><strong>{displayBsDate(student.id_card_valid_upto_bs)}</strong></div>
         </div>
       </div>
@@ -126,21 +131,49 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
     setLoading(true);
     setNotice(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/api/id-cards/students?organizationId=${encodeURIComponent(organizationId)}`);
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.message || 'विद्यार्थी विवरण लोड भएन।');
-      if (!Array.isArray(data)) throw new Error('API बाट विद्यार्थी सूची आएन।');
-      const normalized = data.map(student => ({
+      const urls = [
+        `${apiBaseUrl}/api/id-cards/students?organizationId=${encodeURIComponent(organizationId)}`,
+        `${apiBaseUrl}/api/fee/students?organizationId=${encodeURIComponent(organizationId)}`
+      ];
+      let data = null;
+      let lastError = null;
+      for (const url of urls) {
+        try {
+          const response = await fetch(url);
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.message || `Student API request failed (${response.status}).`);
+          if (!Array.isArray(payload)) throw new Error('API बाट विद्यार्थी सूची आएन।');
+          data = payload;
+          break;
+        } catch (fetchError) {
+          lastError = fetchError;
+        }
+      }
+      if (!Array.isArray(data)) throw lastError || new Error('विद्यार्थी विवरण लोड भएन।');
+      const normalized = data.filter(student => student.is_active !== false).map(student => ({
         ...student,
-        photo_url: student.photo_url || '',
+        reg_no: student.reg_no || student.regNo || '',
+        student_name: student.student_name || student.full_name || student.name || '',
+        class_name: student.class_name || student.grade_name || student.class || '',
+        section: student.section || student.section_name || '',
+        roll_number: student.roll_number ?? student.roll_no ?? '',
+        dob_bs: student.dob_bs || student.date_of_birth_bs || '',
+        gender: student.gender || '',
+        guardian_name: student.guardian_name || student.parent_name || '',
+        guardian_phone: student.guardian_phone || student.parent_phone || '',
+        address: student.address || student.permanent_address || student.temporary_address || '',
+        photo_url: student.photo_url || student.photo || '',
         id_card_valid_upto_bs: student.id_card_valid_upto_bs || '',
-        _originalPhotoUrl: student.photo_url || '',
+        _originalPhotoUrl: student.photo_url || student.photo || '',
         _originalValidUpto: student.id_card_valid_upto_bs || ''
       }));
       setStudents(normalized);
       setSelectedIds(old => old.filter(id => normalized.some(s => Number(s.id) === Number(id))));
+      if (data.length && !Object.prototype.hasOwnProperty.call(data[0], 'id_card_valid_upto_bs')) {
+        setNotice({ type: 'error', text: 'विद्यार्थी विवरण Student Management बाट लोड भयो। Valid Upto मिति सेभ/देखाउन ID Card backend routes जोड्नुपर्छ।' });
+      }
     } catch (error) {
-      setNotice({ type: 'error', text: error.message || 'विद्यार्थी सूची लोड भएन।' });
+      setNotice({ type: 'error', text: error.message || 'विद्यार्थी सूची लोड भएन। Student Management API जाँच्नुहोस्।' });
     } finally {
       setLoading(false);
     }
@@ -158,7 +191,7 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
     return students.filter(s => {
       if (gradeFilter !== 'all' && String(s.class_name || '').trim() !== gradeFilter) return false;
       if (sectionFilter !== 'all' && String(s.section || '').trim() !== sectionFilter) return false;
-      if (needle && ![getRegNo(s), s.student_name, s.class_name, s.section, s.roll_number, s.guardian_name].some(v => String(v || '').toLowerCase().includes(needle))) return false;
+      if (needle && ![getRegNo(s), s.student_name, s.class_name, s.section, s.roll_number, s.dob_bs, s.gender, s.guardian_name, s.guardian_phone, s.address].some(v => String(v || '').toLowerCase().includes(needle))) return false;
       return true;
     });
   }, [students, search, gradeFilter, sectionFilter]);
@@ -232,7 +265,7 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
       const dataRows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
       const entries = dataRows.map((row, index) => ({
         rowNumber: index + 2,
-        regNo: valueFromRow(row, ['regno', 'registrationno', 'studentid', 'admissionno']),
+        regNo: valueFromRow(row, ['regno', 'registrationno', 'studentregistrationno']),
         photoUrl: normalizeDrivePhotoUrl(valueFromRow(row, ['photourl', 'drivelink', 'googledrivelink', 'photolink', 'imageurl', 'photo'])),
         validUptoBs: englishDigits(valueFromRow(row, ['validuptobs', 'validupto', 'expirydate', 'validity'])).replaceAll('/', '-')
       })).filter(row => row.regNo || row.photoUrl || row.validUptoBs);
@@ -281,19 +314,33 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
 
   function printSelected() {
     if (!selectedStudents.length) {
-      setNotice({ type: 'error', text: 'प्रिन्ट गर्न पहिले विद्यार्थी चयन गर्नुहोस्।' });
+      setNotice({ type: 'error', text: 'प्रिन्ट पूर्वावलोकन हेर्न पहिले विद्यार्थी चयन गर्नुहोस्।' });
       return;
     }
+
+    // Do not block print preview when a photo has not been linked yet.
+    // IdCardFace shows initials as a fallback for missing/unavailable photos.
     const missing = selectedStudents.filter(s => !normalizeDrivePhotoUrl(s.photo_url));
     if (missing.length) {
-      setNotice({ type: 'error', text: `${missing.length} विद्यार्थीको फोटो लिंक छैन। प्रिन्ट अघि photo URL राख्नुहोस्।` });
-      return;
+      setNotice({
+        type: 'error',
+        text: `${missing.length} विद्यार्थीको फोटो लिंक छैन। पूर्वावलोकन/प्रिन्ट जारी छ; फोटो नभएका कार्डमा नामको initials देखिनेछ।`
+      });
+    } else {
+      setNotice(null);
     }
+
     setPrinting(true);
-    window.setTimeout(() => {
-      window.print();
-      window.setTimeout(() => setPrinting(false), 800);
-    }, 150);
+    // Let React paint the print root before opening the browser print dialog.
+    window.requestAnimationFrame(() => {
+      window.setTimeout(async () => {
+        try {
+          if (document.fonts?.ready) await document.fonts.ready;
+        } catch { /* Fonts are optional for printing. */ }
+        window.print();
+        window.setTimeout(() => setPrinting(false), 800);
+      }, 150);
+    });
   }
 
   const sheets = useMemo(() => chunks(selectedStudents, 10), [selectedStudents]);
@@ -324,7 +371,7 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
         .id-stat{padding:13px 15px;border-radius:13px;background:linear-gradient(130deg,#121c30,#0b1120);border:1px solid #27334c}
         .id-stat-label{font-size:11px;color:#93a4c5}.id-stat-value{font-size:22px;font-weight:850;color:#f6f8ff;margin-top:4px}
         .id-table-wrap{overflow:auto;border:1px solid #28334b;border-radius:12px;margin-top:14px}
-        .id-student-table{border-collapse:collapse;width:100%;min-width:970px;font-size:12px}
+        .id-student-table{border-collapse:collapse;width:100%;min-width:1550px;font-size:12px}
         .id-student-table th{background:#211b46;color:#ff79bc;text-align:left;padding:12px;border-bottom:1px solid #3c326a;white-space:nowrap}
         .id-student-table td{padding:10px 12px;border-bottom:1px solid #202a3d;color:#d9e3f7;vertical-align:middle}
         .id-student-table tr:last-child td{border-bottom:0}
@@ -352,8 +399,8 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
         @media print{
           body *{visibility:hidden!important}
           .id-print-root,.id-print-root *{visibility:visible!important}
-          .id-print-root{display:block!important;position:fixed!important;left:0!important;top:0!important;width:196mm!important;background:white!important;color:#111!important;z-index:999999!important}
-          .id-print-sheet{width:196mm;height:283mm;display:grid;grid-template-columns:85.6mm 85.6mm;grid-auto-rows:54mm;gap:3mm;justify-content:space-around;align-content:start;page-break-after:always;break-after:page;overflow:hidden}
+          .id-print-root{display:block!important;position:absolute!important;left:0!important;top:0!important;width:196mm!important;background:white!important;color:#111!important;z-index:999999!important;margin:0!important;padding:0!important;overflow:visible!important}
+          .id-print-sheet{width:196mm!important;min-height:283mm!important;display:grid!important;grid-template-columns:85.6mm 85.6mm!important;grid-auto-rows:54mm!important;gap:3mm!important;justify-content:space-around!important;align-content:start!important;page-break-after:always;break-after:page;overflow:visible!important;background:#fff!important}
           .id-print-sheet:last-child{page-break-after:auto;break-after:auto}
           .id-print-root .id-card-face{width:85.6mm!important;height:54mm!important;border-radius:1.5mm!important;box-shadow:none!important;padding:2.2mm!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;border:0.25mm solid #31547a!important}
           .id-print-root .id-card-header{min-height:11mm!important;gap:1.5mm!important;padding-bottom:1.3mm!important}
@@ -368,7 +415,7 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
       <div className="id-page-heading">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ width: 46, height: 46, display: 'grid', placeItems: 'center', borderRadius: 13, background: 'linear-gradient(135deg,#743bdb,#ed4e9b)', boxShadow: '0 8px 22px #0004' }}><CreditCard size={23} /></div>
-          <div><h1 className="id-page-title">विद्यार्थी परिचयपत्र / Student ID Cards</h1><p className="id-subtitle">Reg No अनुसार फोटो मिलान · Google Drive photo links · CR80 standard size (85.6 × 54 mm)</p></div>
+          <div><h1 className="id-page-title">विद्यार्थी परिचयपत्र / Student ID Cards</h1><p className="id-subtitle">विद्यार्थी विवरण Student Management बाट स्वतः लोड हुन्छ · Reg No अनुसार Google Drive फोटो मिलान · CR80 standard size (85.6 × 54 mm)</p></div>
         </div>
       </div>
 
@@ -387,7 +434,7 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
           <div className="id-field"><label>सम्पर्क / Contact (optional)</label><input value={schoolPhone} onChange={e => setSchoolPhone(e.target.value)} placeholder="Phone number" /></div>
           <div className="id-field"><label>विद्यालय लोगोको URL (optional)</label><input value={logoUrl} onChange={e => setLogoUrl(e.target.value)} placeholder="https://..." /></div>
         </div>
-        <p className="id-help">विद्यालयको नाम, ठेगाना, सम्पर्क र लोगो अहिले यस screen/print session मा लागू हुन्छन्। स्थायी school settings चाहिँदैन भने SQL मा परिवर्तन आवश्यक छैन।</p>
+        <p className="id-help">नाम, कक्षा, Section, Roll No, जन्ममिति, लिङ्ग, अभिभावकको नाम/फोन र ठेगाना Student Management को विद्यमान विद्यार्थी रेकर्डबाट स्वतः आउँछन्। ID Card का लागि मात्र Photo URL र Valid Upto अपडेट गर्नुपर्छ। विद्यालयको नाम, ठेगाना, सम्पर्क र लोगो हालको screen/print session मा लागू हुन्छन्।</p>
       </section>
 
       <section className="id-panel">
@@ -408,27 +455,31 @@ export default function StudentIdCardModule({ apiBaseUrl, organizationId = 1, sc
       <section className="id-panel">
         <h2 className="id-panel-title"><Users size={18} color="#a98cff" /> विद्यार्थी सूची / Student List</h2>
         <div className="id-grid">
-          <div className="id-field"><label>खोज्नुहोस् / Search Reg No, Name, Guardian</label><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Reg No or student name" /></div>
+          <div className="id-field"><label>खोज्नुहोस् / Search all student details</label><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Reg No, Name, Guardian, Phone, Address" /></div>
           <div className="id-field"><label>कक्षा / Class</label><select value={gradeFilter} onChange={e => { setGradeFilter(e.target.value); setSectionFilter('all'); }}><option value="all">सबै कक्षा / All grades</option>{grades.map(grade => <option key={grade} value={grade}>{grade}</option>)}</select></div>
           <div className="id-field"><label>Section</label><select value={sectionFilter} onChange={e => setSectionFilter(e.target.value)}><option value="all">सबै Section / All</option>{sections.map(section => <option key={section} value={section}>{section}</option>)}</select></div>
           <div className="id-field"><label>डेटा व्यवस्थापन</label><div className="id-actions"><button type="button" className="id-button" onClick={loadStudents} disabled={loading}><RefreshCw size={14} /> Refresh</button><button type="button" className="id-button" onClick={selectAllVisible}>Select all visible</button><button type="button" className="id-button" onClick={clearSelection}>Clear</button></div></div>
         </div>
         <div className="id-actions" style={{ marginTop: 14 }}>
           <button type="button" className="id-button primary" onClick={saveSelected} disabled={saving || !selectedIds.length}><Save size={15} /> {saving ? 'Saving…' : `Selected विद्यार्थी सेभ (${selectedIds.length})`}</button>
-          <button type="button" className="id-button cyan" onClick={printSelected} disabled={printing || !selectedIds.length}><Printer size={15} /> चयन गरिएका कार्ड प्रिन्ट ({selectedIds.length})</button>
+          <button type="button" className="id-button cyan" onClick={printSelected} disabled={printing || !selectedIds.length}><Printer size={15} /> Preview / चयन गरिएका कार्ड प्रिन्ट ({selectedIds.length})</button>
           <span className="id-help" style={{ margin: 0 }}>सुची: {filteredStudents.length} विद्यार्थी · फोटो लिंक: {photoCount}</span>
         </div>
         <div className="id-table-wrap">
-          <table className="id-student-table"><thead><tr><th><input type="checkbox" aria-label="Select visible students" checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedIds.includes(Number(s.id)))} onChange={e => e.target.checked ? selectAllVisible() : setSelectedIds(old => old.filter(id => !filteredStudents.some(s => Number(s.id) === id)))} /></th><th>Photo</th><th>Reg No</th><th>Student Name</th><th>Class</th><th>Section</th><th>DOB (B.S.)</th><th>Google Drive / Photo URL</th><th>Valid Upto (B.S.)</th></tr></thead>
+          <table className="id-student-table"><thead><tr><th><input type="checkbox" aria-label="Select visible students" checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedIds.includes(Number(s.id)))} onChange={e => e.target.checked ? selectAllVisible() : setSelectedIds(old => old.filter(id => !filteredStudents.some(s => Number(s.id) === id)))} /></th><th>Photo</th><th>Reg No</th><th>Student Name</th><th>Class</th><th>Section</th><th>Roll No</th><th>DOB (B.S.)</th><th>Gender</th><th>Parent / Guardian</th><th>Guardian Phone</th><th>Address</th><th>Google Drive / Photo URL</th><th>Valid Upto (B.S.)</th></tr></thead>
             <tbody>{filteredStudents.map(student => <tr key={student.id}>
               <td><input type="checkbox" checked={selectedIds.includes(Number(student.id))} onChange={() => toggleSelected(Number(student.id))} aria-label={`Select ${student.student_name}`} /></td>
               <td>{student.photo_url ? <StudentPhoto src={student.photo_url} studentName={student.student_name} className="id-avatar-small" /> : <div className="id-avatar-small id-photo-fallback">{initials(student.student_name)}</div>}</td>
               <td style={{ whiteSpace: 'nowrap', fontWeight: 800 }}>{getRegNo(student) || '—'}</td>
-              <td style={{ minWidth: 160 }}>{student.student_name}</td><td>{student.class_name || '—'}</td><td>{student.section || '—'}</td><td>{displayBsDate(student.dob_bs)}</td>
+              <td style={{ minWidth: 160 }}>{student.student_name || '—'}</td>
+              <td>{student.class_name || '—'}</td><td>{student.section || '—'}</td><td>{student.roll_number || '—'}</td>
+              <td>{displayBsDate(student.dob_bs)}</td><td>{student.gender || '—'}</td>
+              <td style={{ minWidth: 140 }}>{student.guardian_name || '—'}</td><td style={{ whiteSpace: 'nowrap' }}>{student.guardian_phone || '—'}</td>
+              <td style={{ minWidth: 180, maxWidth: 260, whiteSpace: 'normal' }}>{student.address || '—'}</td>
               <td style={{ minWidth: 240 }}><input value={student.photo_url} onChange={e => updateStudent(student.id, { photo_url: e.target.value })} placeholder="Paste Google Drive file sharing URL" /></td>
               <td><input value={student.id_card_valid_upto_bs} onChange={e => updateStudent(student.id, { id_card_valid_upto_bs: e.target.value })} placeholder="२०८३-१२-३०" /></td>
             </tr>)}
-            {!filteredStudents.length && <tr><td colSpan="9" style={{ textAlign: 'center', padding: 25 }}>{loading ? 'विद्यार्थी विवरण लोड हुँदैछ…' : 'विद्यार्थी भेटिएन।'}</td></tr>}
+            {!filteredStudents.length && <tr><td colSpan="14" style={{ textAlign: 'center', padding: 25 }}>{loading ? 'विद्यार्थी विवरण लोड हुँदैछ…' : 'विद्यार्थी भेटिएन।'}</td></tr>}
             </tbody></table>
         </div>
         <p className="id-help">मिति वि.सं. मा <strong>YYYY-MM-DD</strong> ढाँचामा राख्नुहोस् (उदाहरण: २०८३-१२-३०)। कार्डको भौतिक आकार CR80 / ID-1: <strong>85.6 × 54 mm</strong>, Landscape हो। प्रिन्ट गर्दा Browser dialog मा background graphics चालू गर्नुहोस् र Scale 100%/Actual Size राख्नुहोस्।</p>

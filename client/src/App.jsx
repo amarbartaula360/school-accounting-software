@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import NepaliDate from 'nepali-date-converter';
 import ExaminationModule from './ExaminationModule.jsx';
+import StudentIdCardModule from './StudentIdCardModule.jsx';
 import * as XLSX from 'xlsx';
 import {
   LayoutDashboard, BookOpen, ReceiptText, GraduationCap, Utensils,
@@ -23,6 +24,7 @@ const navigation = [
   { title: 'अन्य मोड्युल / Other Modules' },
   { label: 'Cash & Bank', icon: Landmark },
   { label: 'Student Fees', icon: GraduationCap },
+  { label: 'Student ID Cards', icon: CreditCard },
   { label: 'Examination & Marksheet', icon: FileText },
   { label: 'Payroll & Staff', icon: Users },
   { label: 'Hostel & Canteen', icon: Utensils },
@@ -2986,6 +2988,12 @@ export default function App() {
           {active === 'Student Fees' && (
             <StudentFees accounts={accounts} onRefreshAccounts={loadAccounts} />
           )}
+          {active === 'Student ID Cards' && (
+  <StudentIdCardModule
+    apiBaseUrl={API_BASE_URL}
+    organizationId={ORGANIZATION_ID}
+  />
+)}
 
           {active === 'Examination & Marksheet' && (
             <ExaminationModule apiBaseUrl={API_BASE_URL} organizationId={ORGANIZATION_ID} user={user} />
