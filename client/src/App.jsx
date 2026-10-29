@@ -2871,15 +2871,59 @@ export default function App() {
       setLoading(false);
     }
   }
+async function loadTodayTransactions() {
+  const today = getTodayAD();
 
-  useEffect(() => {
-    loadAccounts();
-  }, []);
+  try {
+    const query = new URLSearchParams({
+      organizationId: String(ORGANIZATION_ID),
+      from: today,
+      to: today
+    });
 
-  function handleVoucherSaved(transaction) {
-    setTransactions(prev => [transaction, ...prev]);
+    const response = await fetch(
+      `${API_BASE_URL}/api/journal-entries?${query}`
+    );
+
+    const data = await response.json().catch(() => []);
+
+    if (!response.ok) {
+      throw new Error(
+        data.message || 'आजका कारोबार लोड गर्न सकिएन।'
+      );
+    }
+
+    if (!Array.isArray(data)) {
+      throw new Error('Journal API बाट सही सूची आएन।');
+    }
+
+    setTransactions(data.map(entry => ({
+      id: Number(entry.id),
+      date: String(entry.entry_date || '').slice(0, 10),
+      ref: entry.voucher_number || '',
+      description: entry.description || '',
+      category: entry.voucher_type || 'Journal Voucher',
+      method: 'Journal',
+      amount: Number(
+        entry.total_debit ?? entry.total_credit ?? 0
+      ),
+      positive: true
+    })));
+  } catch (error) {
+    console.error(
+      'Today transactions loading error:',
+      error
+    );
+    setTransactions([]);
   }
-
+}
+useEffect(() => {
+  loadAccounts();
+  loadTodayTransactions();
+}, []);
+async function handleVoucherSaved() {
+  await loadTodayTransactions();
+}
   if (!user) return <LoginSystem onLogin={setUser} />;
 
   const pageTitle = active === 'Dashboard'
@@ -2977,7 +3021,10 @@ export default function App() {
               accounts={accounts}
               loading={loading}
               error={accountsError}
-              onReload={loadAccounts}
+             onReload={() => {
+                loadAccounts();
+                 loadTodayTransactions();
+            }}
             />
           )}
 

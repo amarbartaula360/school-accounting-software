@@ -56,7 +56,7 @@ app.get('/api/db-check', async (_req, res) => {
       databaseTime: result.rows[0].database_time
     });
   } catch (err) {
-    console.error('Database check failed:', err.message);
+    console.error('Database check failed:', err);
     res.status(500).json({ ok: false, message: 'Database connection failed' });
   }
 });
@@ -457,7 +457,12 @@ app.get('/api/journal-entries', async (req, res) => {
     );
     return res.json(result.rows);
   } catch (err) {
-    console.error('Journal register error:', err.message);
+    console.error('Database error details:', {
+      code: err.code,
+      message: err.message,
+      position: err.position
+    });
+    console.error('Journal register error:', err);
     return res.status(500).json({ message: 'Could not load journal register' });
   }
 });
@@ -472,7 +477,7 @@ app.get('/api/ledger', async (req, res) => {
     if (!isValidDate(from) || !isValidDate(to) || (from && to && from > to)) {
       return res.status(400).json({ message: 'Valid date range is required' });
     }
-
+    
     const result = await pool.query(
       `WITH account_entries AS (
          SELECT
@@ -2678,7 +2683,6 @@ app.post('/api/id-cards/photo-links/import', async (req, res) => {
     client?.release();
   }
 });
-
 app.listen(port, () => {
   console.log(`Accounting API listening on port ${port}`);
 });

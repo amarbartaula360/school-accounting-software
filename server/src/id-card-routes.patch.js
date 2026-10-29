@@ -28,7 +28,7 @@ app.get('/api/id-cards/students', async (req, res) => {
       return res.status(400).json({ message: 'Valid organizationId is required.' });
     }
     const result = await pool.query(
-      `SELECT id, organization_id, reg_no, admission_no, student_name, class_name,
+      `SELECT id, organization_id, reg_no, student_name, class_name,
               section, roll_number, dob_bs, gender, address, photo_url,
               id_card_valid_upto_bs, guardian_name, guardian_phone, is_active, created_at
        FROM public.fee_students
@@ -62,7 +62,7 @@ app.put('/api/id-cards/students/:studentId', async (req, res) => {
        SET photo_url = $1,
            id_card_valid_upto_bs = NULLIF($2, '')
        WHERE id = $3 AND organization_id = $4 AND is_active = TRUE
-       RETURNING id, reg_no, admission_no, student_name, class_name, section,
+       RETURNING id, reg_no, student_name, class_name, section,
                  roll_number, dob_bs, photo_url, id_card_valid_upto_bs`,
       [normalizedPhoto || null, normalizedValidUpto || '', studentId, Number(organizationId)]
     );
@@ -104,7 +104,7 @@ app.post('/api/id-cards/photo-links/import', async (req, res) => {
       const match = await client.query(
         `SELECT id FROM public.fee_students
          WHERE organization_id = $1 AND is_active = TRUE
-           AND COALESCE(NULLIF(BTRIM(reg_no), ''), BTRIM(admission_no)) = $2
+           AND NULLIF(BTRIM(reg_no), '') = $2
          ORDER BY id LIMIT 2`,
         [Number(organizationId), regNo]
       );
