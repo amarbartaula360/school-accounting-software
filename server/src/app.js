@@ -2,6 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { pool } from './db.js';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 
 dotenv.config();
 
@@ -17,7 +21,7 @@ const allowedOrigins = [
   'https://www.amarbartaula.com.np',
   process.env.CLIENT_ORIGIN
 ].filter(Boolean);
-
+app.use(helmet());
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '1mb' }));
 function isValidOrganizationId(value) {
@@ -2683,6 +2687,163 @@ app.post('/api/id-cards/photo-links/import', async (req, res) => {
     client?.release();
   }
 });
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { message: 'धेरै पटक प्रयास गर्नुभयो। १५ मिनेटपछि पुनः प्रयास गर्नुहोस्।' }
+});
+
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
+  try {
+    const { organizationId, email, password } = req.body || {};
+
+    if (
+      !organizationId ||
+      !email ||
+      typeof email !== 'string' ||
+      !password ||
+      typeof password !== 'string'
+    ) {
+      return res.status(400).json({
+        message: 'Email र password आवश्यक छन्।'
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT id, organization_id, full_name, email,
+              password_hash, role, permissions, is_active
+       FROM app_users
+       WHERE organization_id = $1
+         AND LOWER(email) = LOWER($2)
+       LIMIT 1`,
+      [organizationId, email.trim()]
+    );
+
+    const user = result.rows[0];
+    console.log('Login check:', {
+  userFound: !!user,
+  active: user?.is_active,
+  hasPasswordHash: !!user?.password_hash,
+  hashLength: user?.password_hash?.length
+});
+
+    if (
+      !user ||
+      !user.is_active ||
+      !(await bcrypt.compare(password, user.password_hash))
+    ) {
+      return res.status(401).json({
+        message: 'Email वा password मिलेन।'
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        organizationId: user.organization_id,
+        role: user.role,
+        permissions: user.permissions || []
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    await pool.query(
+      'UPDATE app_users SET last_login_at = NOW() WHERE id = $1',
+      [user.id]
+    );
+
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        organizationId: user.organization_id,
+        name: user.full_name,
+        email: user.email,
+        role: user.role,
+        permissions: user.permissions || []
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error.message);
+    return res.status(500).json({
+      message: 'Login गर्दा समस्या आयो।'
+    });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Accounting API listening on port ${port}`);
 });
+
+dotenv.config();
+
+const ORGANIZATION_ID = 1;
+const ADMIN_NAME = 'System Administrator';
+const ADMIN_EMAIL = 'amarbartaula360@gmail.com';
+const ADMIN_PASSWORD = '@United987654321';
+
+async function createAdmin() {
+  try {
+    if (
+      !ADMIN_EMAIL.includes('@') ||
+      ADMIN_PASSWORD === 'YOUR_ADMIN_PASSWORD' ||
+      ADMIN_PASSWORD.length < 12
+    ) {
+      throw new Error(
+        'Admin email राख्नुहोस् र कम्तीमा 12 characters को password सेट गर्नुहोस्।'
+      );
+    }
+
+    const existing = await pool.query(
+      `SELECT id FROM app_users
+       WHERE organization_id = $1
+       AND LOWER(email) = LOWER($2)
+       LIMIT 1`,
+      [ORGANIZATION_ID, ADMIN_EMAIL]
+    );
+
+    if (existing.rows.length > 0) {
+      throw new Error('यो email को user पहिले नै छ।');
+    }
+
+    const org = await pool.query(
+      'SELECT id FROM organizations WHERE id = $1',
+      [ORGANIZATION_ID]
+    );
+
+    if (org.rows.length === 0) {
+      throw new Error('Organization ID 1 भेटिएन।');
+    }
+
+    const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+
+    const result = await pool.query(
+      `INSERT INTO app_users
+        (organization_id, full_name, email, password_hash, role,
+         permissions, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+       RETURNING id, full_name, email, role`,
+      [
+        ORGANIZATION_ID,
+        ADMIN_NAME,
+        ADMIN_EMAIL,
+        passwordHash,
+        'admin',
+        ['*']
+      ]
+    );
+
+    console.log('Admin user created:', result.rows[0]);
+  } catch (error) {
+    console.error('Admin creation failed:', error.message);
+    process.exitCode = 1;
+  } finally {
+   }
+}
+
+createAdmin();
+

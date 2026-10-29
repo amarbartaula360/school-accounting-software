@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { apiFetch, AUTH_TOKEN_KEY } from './api.js';
 import NepaliDate from 'nepali-date-converter';
 import ExaminationModule from './ExaminationModule.jsx';
 import StudentIdCardModule from './StudentIdCardModule.jsx';
@@ -11,7 +12,7 @@ import {
   LogIn, LogOut, CalendarDays, AlertCircle, CheckCircle2
 } from 'lucide-react';
 
-const API_BASE_URL = 'https://school-accounting-software.onrender.com';
+const API_BASE_URL = 'http://localhost:4000';
 const ORGANIZATION_ID = 1;
 
 const navigation = [
@@ -143,23 +144,39 @@ function normalizeAccount(account) {
 }
 
 function LoginSystem({ onLogin }) {
-  const [email, setEmail] = useState('amar@gmail.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  function login(e) {
-    e.preventDefault();
+  async function login(event) {
+    event.preventDefault();
     setError('');
+    setLoading(true);
 
-    if (
-      email.trim().toLowerCase() === 'amar@gmail.com' &&
-      password === '@Amar123'
-    ) {
-      onLogin({ name: 'Amar Bartaula', email: 'amar@gmail.com' });
-    } else {
-      setError(
-        'इमेल वा पासवर्ड मिलेन। यो demo login हो; production login backend मा बनाउनुपर्छ।'
-      );
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organizationId: ORGANIZATION_ID,
+          email: email.trim(),
+          password
+        })
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.token || !data.user) {
+        throw new Error(data.message || 'Login हुन सकेन।');
+      }
+
+      sessionStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      onLogin(data.user);
+    } catch (err) {
+      setError(err.message || 'Login गर्दा समस्या आयो।');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -169,41 +186,47 @@ function LoginSystem({ onLogin }) {
         <div style={styles.loginHeaderIcon}>
           <Landmark size={32} color="#ff4fa3" />
         </div>
+
         <h1 style={styles.loginTitle}>LedgerPro</h1>
         <p style={styles.loginSubtitle}>United English Boarding School</p>
-        <p style={styles.loginSubText}>विद्यालय लेखा व्यवस्थापन प्रणाली</p>
+        <p style={styles.loginSubText}>
+          विद्यालय लेखा व्यवस्थापन प्रणाली
+        </p>
 
         <label style={styles.label}>
           इमेल / Email
           <input
             style={styles.input}
             type="email"
+            autoComplete="username"
             value={email}
-            onChange={e => setEmail(e.target.value)}
+            onChange={event => setEmail(event.target.value)}
             required
           />
         </label>
 
-        <label style={styles.label}>
+               <label style={styles.label}>
           पासवर्ड / Password
           <input
             style={styles.input}
             type="password"
+            autoComplete="current-password"
             value={password}
-            onChange={e => setPassword(e.target.value)}
+            onChange={event => setPassword(event.target.value)}
             required
           />
         </label>
 
         {error && <p style={styles.error}>{error}</p>}
 
-        <button style={styles.primaryButton} type="submit">
-          <LogIn size={17} /> Login गर्नुहोस्
+        <button
+          style={styles.primaryButton}
+          type="submit"
+          disabled={loading}
+        >
+          <LogIn size={17} />
+          {loading ? 'Login हुँदैछ...' : 'Login गर्नुहोस्'}
         </button>
-
-        <div style={styles.demoBadge}>
-          Demo password: <strong>@Amar123</strong>
-        </div>
       </form>
     </div>
   );
@@ -219,17 +242,37 @@ function Sidebar({ active, setActive, open, setOpen, user, onLogout }) {
         />
       )}
 
-      <aside style={{
-        ...styles.sidebar,
-        ...(open ? styles.sidebarOpen : {})
-      }}>
+      <aside
+        style={{
+          ...styles.sidebar,
+          ...(open ? styles.sidebarOpen : {})
+        }}
+      >
         <div style={styles.brand}>
           <div style={styles.brandIconBox}>
             <Landmark size={22} color="#fff" />
           </div>
+
           <div>
-            <strong style={{ fontSize: '16px', letterSpacing: '-0.02em', color: '#f8fafc' }}>LedgerPro</strong>
-            <small style={{ display: 'block', color: '#94a3b8', fontSize: '10px', fontWeight: 600, letterSpacing: '0.05em' }}>
+            <strong
+              style={{
+                fontSize: '16px',
+                letterSpacing: '-0.02em',
+                color: '#f8fafc'
+              }}
+            >
+              LedgerPro
+            </strong>
+
+            <small
+              style={{
+                display: 'block',
+                color: '#94a3b8',
+                fontSize: '10px',
+                fontWeight: 600,
+                letterSpacing: '0.05em'
+              }}
+            >
               SCHOOL FINANCE
             </small>
           </div>
@@ -237,17 +280,41 @@ function Sidebar({ active, setActive, open, setOpen, user, onLogout }) {
 
         <div style={styles.workspace}>
           <div style={styles.workspaceIcon}>UE</div>
+
           <div style={{ flex: 1, minWidth: 0 }}>
-            <strong style={{ display: 'block', color: '#f1f5f9', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>United English</strong>
-            <small style={{ display: 'block', color: '#94a3b8', fontSize: '11px' }}>School Accounting</small>
+            <strong
+              style={{
+                display: 'block',
+                color: '#f1f5f9',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis'
+              }}
+            >
+              United English
+            </strong>
+
+            <small
+              style={{
+                display: 'block',
+                color: '#94a3b8',
+                fontSize: '11px'
+              }}
+            >
+              School Accounting
+            </small>
           </div>
+
           <ChevronDown size={14} color="#64748b" />
         </div>
 
         <nav style={styles.navScroll}>
           {navigation.map((item, index) =>
             item.title ? (
-              <div key={`${item.title}-${index}`} style={styles.navTitle}>
+              <div
+                key={`${item.title}-${index}`}
+                style={styles.navTitle}
+              >
                 {item.title}
               </div>
             ) : (
@@ -259,7 +326,9 @@ function Sidebar({ active, setActive, open, setOpen, user, onLogout }) {
                 }}
                 style={{
                   ...styles.navButton,
-                  ...(active === item.label ? styles.navActive : {})
+                  ...(active === item.label
+                    ? styles.navActive
+                    : {})
                 }}
               >
                 <item.icon size={17} />
@@ -274,12 +343,34 @@ function Sidebar({ active, setActive, open, setOpen, user, onLogout }) {
             <div style={styles.avatar}>
               {user?.name?.[0] || 'U'}
             </div>
+
             <div style={{ flex: 1, minWidth: 0 }}>
-              <strong style={{ display: 'block', color: '#e2e8f0', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.name || 'User'}</strong>
-              <small style={{ display: 'block', color: '#94a3b8', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <strong
+                style={{
+                  display: 'block',
+                  color: '#e2e8f0',
+                  fontSize: '13px',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}
+              >
+                {user?.name || 'User'}
+              </strong>
+
+              <small
+                style={{
+                  display: 'block',
+                  color: '#94a3b8',
+                  fontSize: '11px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}
+              >
                 {user?.email}
               </small>
             </div>
+
             <button
               title="Logout"
               style={styles.logoutButton}
@@ -293,7 +384,6 @@ function Sidebar({ active, setActive, open, setOpen, user, onLogout }) {
     </>
   );
 }
-
 function Dashboard({ accounts, transactions, loading, onReload, error }) {
   const todayAD = getTodayAD();
   const todayBS = toBS(todayAD);
