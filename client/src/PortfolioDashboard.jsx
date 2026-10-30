@@ -122,7 +122,7 @@ export default function PortfolioDashboard({ onOpenSchool }) {
             </div>
           </section>
           <section className="amar-section" id="contact">
-            <div className="amar-contact"><div><h2>Let's build something useful.</h2><p>For project discussions and collaboration, get in touch.</p></div><a className="amar-btn primary" href="mailto:">Email <Mail size={15}/></a></div>
+            <div className="amar-contact"><div><h2>Let's build something useful.</h2><p>For project discussions and collaboration, get in touch.</p><div style={{display:"flex",flexDirection:"column",gap:12,marginTop:18}}><a href="tel:+9779845433722" style={{color:"#dbe8ff",textDecoration:"none"}}>Phone: +977 9845433722</a><a href="mailto:amarbartaula360@gmail.com" style={{color:"#dbe8ff",textDecoration:"none"}}>Email: amarbartaula360@gmail.com</a><a href="https://www.facebook.com/lbartaula" target="_blank" rel="noreferrer" style={{color:"#dbe8ff",textDecoration:"none"}}>Facebook: www.facebook.com/lbartaula</a></div></div><a className="amar-btn primary" href="mailto:amarbartaula360@gmail.com">Email <Mail size={15}/></a></div>
           </section>
         </main>
         <footer className="amar-footer"><span>© {new Date().getFullYear()} Amar Bartaula</span><span>Personal Portfolio · Software & Digital Solutions</span></footer>
