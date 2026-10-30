@@ -10,6 +10,9 @@ import jwt from 'jsonwebtoken';
 dotenv.config();
 
 const app = express();
+
+// Render runs Express behind a proxy; trust the first proxy for client IP rate limiting.
+app.set('trust proxy', 1);
 const port = process.env.PORT || 4000;
 
 const allowedOrigins = [
