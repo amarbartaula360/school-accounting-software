@@ -21,6 +21,7 @@ const allowedOrigins = [
   'https://www.amarbartaula.com.np',
   process.env.CLIENT_ORIGIN
 ].filter(Boolean);
+
 app.use(helmet());
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '1mb' }));
