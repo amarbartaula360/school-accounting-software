@@ -12,9 +12,8 @@ import {
   LogIn, LogOut, CalendarDays, AlertCircle, CheckCircle2
 } from 'lucide-react';
 
-const API_BASE_URL = 'http://localhost:4000';
+const API_BASE_URL = 'https://school-accounting-software.onrender.com';
 const ORGANIZATION_ID = 1;
-
 const navigation = [
   { title: 'मुख्य पृष्ठ' },
   { label: 'Dashboard', icon: LayoutDashboard },
