@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowUpRight, Code2, Database, GraduationCap, Mail, Menu, Monitor, Github, Linkedin, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Code2, Database, GraduationCap, Mail, Menu, Monitor, Sparkles } from 'lucide-react';
 
 const projects = [
   {
