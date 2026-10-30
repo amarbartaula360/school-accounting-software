@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import UserAccessModule from './UserAccessModule.jsx';
 import { apiFetch, AUTH_TOKEN_KEY } from './api.js';
 import NepaliDate from 'nepali-date-converter';
 import ExaminationModule from './ExaminationModule.jsx';
@@ -12,7 +13,9 @@ import {
   LogIn, LogOut, CalendarDays, AlertCircle, CheckCircle2
 } from 'lucide-react';
 
-const API_BASE_URL = 'https://school-accounting-software.onrender.com';
+const API_BASE_URL = import.meta.env.DEV
+  ? 'http://localhost:4000'
+  : 'https://school-accounting-software.onrender.com';
 const ORGANIZATION_ID = 1;
 const navigation = [
   { title: 'मुख्य पृष्ठ' },
@@ -29,8 +32,8 @@ const navigation = [
   { label: 'Payroll & Staff', icon: Users },
   { label: 'Hostel & Canteen', icon: Utensils },
   { label: 'Purchases & Inventory', icon: Package },
-  { label: 'Sales & Receipts', icon: CreditCard }
-];
+{ label: 'Sales & Receipts', icon: CreditCard },
+{ label: 'User Management', icon: Users }];
 
 const money = value =>
   `Rs. ${Number(value || 0).toLocaleString('en-IN', {
@@ -308,7 +311,7 @@ function Sidebar({ active, setActive, open, setOpen, user, onLogout }) {
         </div>
 
         <nav style={styles.navScroll}>
-          {navigation.map((item, index) =>
+          {navigation.filter(item => item.label !== 'User Management' || user?.role === 'admin').map((item, index) =>
             item.title ? (
               <div
                 key={`${item.title}-${index}`}
@@ -3125,7 +3128,8 @@ async function handleVoucherSaved() {
             <StudentFees accounts={accounts} onRefreshAccounts={loadAccounts} />
           )}
           {active === 'Student ID Cards' && (
-  <StudentIdCardModule
+
+<StudentIdCardModule
     apiBaseUrl={API_BASE_URL}
     organizationId={ORGANIZATION_ID}
   />
@@ -3134,17 +3138,20 @@ async function handleVoucherSaved() {
           {active === 'Examination & Marksheet' && (
             <ExaminationModule apiBaseUrl={API_BASE_URL} organizationId={ORGANIZATION_ID} user={user} />
           )}
-
-          {![
-            'Dashboard',
-            'Journal Vouchers',
-            'Chart of Accounts',
-            'Financial Reports',
-            'Student Fees',
-            'Examination & Marksheet'
-          ].includes(active) && (
-            <Placeholder title={active} setActive={setActive} />
-          )}
+{active === 'User Management' && user?.role === 'admin' && (
+  <UserAccessModule apiBaseUrl={API_BASE_URL} />
+)}
+         {![
+  'Dashboard',
+  'Journal Vouchers',
+  'Chart of Accounts',
+  'Financial Reports',
+  'Student Fees',
+  'Examination & Marksheet',
+  'User Management'
+].includes(active) && (
+  <Placeholder title={active} setActive={setActive} />
+)}
         </div>
 
         <footer style={styles.footer}>

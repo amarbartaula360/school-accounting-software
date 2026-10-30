@@ -2776,6 +2776,346 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
   }
 });
 
+// ---------------- User Management Authentication ----------------
+
+async function requireAuth(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization || '';
+
+    if (!authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        message: 'Login आवश्यक छ।'
+      });
+    }
+
+    const token = authHeader.slice(7);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const result = await pool.query(
+      `SELECT id, organization_id, full_name, email,
+              role, permissions, is_active
+       FROM app_users
+       WHERE id = $1 AND organization_id = $2`,
+      [decoded.userId, decoded.organizationId]
+    );
+
+    if (!result.rowCount || !result.rows[0].is_active) {
+      return res.status(401).json({
+        message: 'User Account Active छैन।'
+      });
+    }
+
+    req.authUser = result.rows[0];
+    next();
+
+  } catch (error) {
+    return res.status(401).json({
+      message: 'Login Token अमान्य वा Expired भएको छ।'
+    });
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (req.authUser?.role !== 'admin') {
+    return res.status(403).json({
+      message: 'यो सुविधा Admin का लागि मात्र हो।'
+    });
+  }
+
+  next();
+}
+
+// ---------------- Admin User Management API ----------------
+
+const USER_ROLES = [
+  'principal',
+  'accountant',
+  'cashier',
+  'exam_coordinator',
+  'teacher',
+  'viewer'
+];
+
+const USER_MODULES = [
+  'dashboard',
+  'accounts',
+  'journal_vouchers',
+  'financial_reports',
+  'cash_bank',
+  'student_fees',
+  'student_id_cards',
+  'examination',
+  'payroll',
+  'hostel_canteen',
+  'purchases_inventory',
+  'sales_receipts'
+];
+
+const USER_ACTIONS = ['view', 'create', 'edit', 'delete', 'print'];
+
+function validUserPermissions(permissions) {
+  return Array.isArray(permissions) &&
+    permissions.every(permission => {
+      if (typeof permission !== 'string') return false;
+      const [module, action, extra] = permission.split(':');
+      return USER_MODULES.includes(module) &&
+        USER_ACTIONS.includes(action) &&
+        extra === undefined;
+    });
+}
+
+// 1. Get all users
+app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, full_name, email, role, permissions,
+              is_active, created_at, last_login_at
+       FROM app_users
+       WHERE organization_id = $1
+       ORDER BY id`,
+      [req.authUser.organization_id]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('User list error:', error.message);
+    res.status(500).json({ message: 'User list load गर्न सकिएन।' });
+  }
+});
+
+// 2. Create new user
+app.post('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const {
+      fullName,
+      email,
+      password,
+      role,
+      permissions = []
+    } = req.body || {};
+
+    const cleanName = String(fullName || '').trim();
+    const cleanEmail = String(email || '').trim().toLowerCase();
+
+    if (!cleanName || !cleanEmail.includes('@')) {
+      return res.status(400).json({
+        message: 'Name र valid Email आवश्यक छ।'
+      });
+    }
+
+    if (typeof password !== 'string' || password.length < 12) {
+      return res.status(400).json({
+        message: 'Password कम्तीमा 12 characters हुनुपर्छ।'
+      });
+    }
+
+    if (!USER_ROLES.includes(role)) {
+      return res.status(400).json({
+        message: 'Invalid User Role।'
+      });
+    }
+
+    if (!validUserPermissions(permissions)) {
+      return res.status(400).json({
+        message: 'Invalid Module Permissions।'
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const result = await pool.query(
+      `INSERT INTO app_users
+        (organization_id, full_name, email, password_hash,
+         role, permissions, is_active, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW(), NOW())
+       RETURNING id, full_name, email, role, permissions,
+                 is_active, created_at`,
+      [
+        req.authUser.organization_id,
+        cleanName,
+        cleanEmail,
+        passwordHash,
+        role,
+        permissions
+      ]
+    );
+
+    res.status(201).json({
+      message: 'नयाँ User सफलतापूर्वक सिर्जना भयो।',
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({
+        message: 'यो Email पहिले नै प्रयोग भएको छ।'
+      });
+    }
+
+    console.error('Create user error:', error.message);
+    res.status(500).json({
+      message: 'User बनाउन समस्या आयो।'
+    });
+  }
+});
+// ---------------- Admin User Update API ----------------
+
+// 1. Edit User
+app.put('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const { fullName, email, role, permissions } = req.body || {};
+
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      return res.status(400).json({ message: 'Invalid User ID।' });
+    }
+
+    if (!String(fullName || '').trim() ||
+        !String(email || '').trim().includes('@')) {
+      return res.status(400).json({ message: 'Name र valid Email आवश्यक छ।' });
+    }
+
+    if (!USER_ROLES.includes(role) || !validUserPermissions(permissions)) {
+      return res.status(400).json({ message: 'Invalid Role वा Permissions।' });
+    }
+
+    if (userId === Number(req.authUser.id) && role !== 'admin') {
+      return res.status(400).json({
+        message: 'आफ्नो Admin Role परिवर्तन गर्न मिल्दैन।'
+      });
+    }
+
+    const result = await pool.query(
+      `UPDATE app_users
+       SET full_name = $1, email = $2, role = $3,
+           permissions = $4, updated_at = NOW()
+       WHERE id = $5 AND organization_id = $6
+       RETURNING id, full_name, email, role, permissions, is_active`,
+      [
+        String(fullName).trim(),
+        String(email).trim().toLowerCase(),
+        role,
+        permissions,
+        userId,
+        req.authUser.organization_id
+      ]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ message: 'User भेटिएन।' });
+    }
+
+    res.json({ message: 'User Update भयो।', user: result.rows[0] });
+
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ message: 'यो Email पहिले नै प्रयोग भएको छ।' });
+    }
+    console.error('Update user error:', error.message);
+    res.status(500).json({ message: 'User Update गर्न समस्या आयो।' });
+  }
+});
+
+
+// 2. Activate / Deactivate User
+app.patch('/api/admin/users/:id/status', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const { isActive } = req.body || {};
+
+    if (!Number.isSafeInteger(userId) || userId <= 0 ||
+        typeof isActive !== 'boolean') {
+      return res.status(400).json({ message: 'Invalid User ID वा Status।' });
+    }
+
+    if (userId === Number(req.authUser.id) && !isActive) {
+      return res.status(400).json({
+        message: 'आफ्नो Account Deactivate गर्न मिल्दैन।'
+      });
+    }
+
+    const target = await pool.query(
+      `SELECT role, is_active FROM app_users
+       WHERE id = $1 AND organization_id = $2`,
+      [userId, req.authUser.organization_id]
+    );
+
+    if (!target.rowCount) {
+      return res.status(404).json({ message: 'User भेटिएन।' });
+    }
+
+    if (!isActive && target.rows[0].role === 'admin' && target.rows[0].is_active) {
+      const admins = await pool.query(
+        `SELECT COUNT(*)::int AS total FROM app_users
+         WHERE organization_id = $1 AND role = 'admin' AND is_active = TRUE`,
+        [req.authUser.organization_id]
+      );
+
+      if (admins.rows[0].total <= 1) {
+        return res.status(400).json({
+          message: 'अन्तिम Active Admin Account Deactivate गर्न मिल्दैन।'
+        });
+      }
+    }
+
+    const result = await pool.query(
+      `UPDATE app_users
+       SET is_active = $1, updated_at = NOW()
+       WHERE id = $2 AND organization_id = $3
+       RETURNING id, full_name, email, role, is_active`,
+      [isActive, userId, req.authUser.organization_id]
+    );
+
+    res.json({
+      message: isActive ? 'User Activate भयो।' : 'User Deactivate भयो।',
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('User status error:', error.message);
+    res.status(500).json({ message: 'User Status परिवर्तन गर्न समस्या आयो।' });
+  }
+});
+
+
+// 3. Reset User Password
+app.patch('/api/admin/users/:id/password', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const { newPassword } = req.body || {};
+
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      return res.status(400).json({ message: 'Invalid User ID।' });
+    }
+
+    if (typeof newPassword !== 'string' || newPassword.length < 12) {
+      return res.status(400).json({
+        message: 'Password कम्तीमा 12 characters हुनुपर्छ।'
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    const result = await pool.query(
+      `UPDATE app_users
+       SET password_hash = $1, updated_at = NOW()
+       WHERE id = $2 AND organization_id = $3
+       RETURNING id, full_name, email`,
+      [passwordHash, userId, req.authUser.organization_id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ message: 'User भेटिएन।' });
+    }
+
+    res.json({ message: 'Password Reset भयो।' });
+
+  } catch (error) {
+    console.error('Password reset error:', error.message);
+    res.status(500).json({ message: 'Password Reset गर्न समस्या आयो।' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Accounting API listening on port ${port}`);
 });
@@ -2846,5 +3186,4 @@ async function createAdmin() {
    }
 }
 
-createAdmin();
 
