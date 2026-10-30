@@ -4,6 +4,7 @@ import { apiFetch, AUTH_TOKEN_KEY } from './api.js';
 import NepaliDate from 'nepali-date-converter';
 import ExaminationModule from './ExaminationModule.jsx';
 import StudentIdCardModule from './StudentIdCardModule.jsx';
+import PortfolioDashboard from './PortfolioDashboard.jsx';
 import * as XLSX from 'xlsx';
 import {
   LayoutDashboard, BookOpen, ReceiptText, GraduationCap, Utensils,
@@ -2928,6 +2929,7 @@ function Placeholder({ title, setActive }) {
 }
 
 export default function App() {
+  const [showPortfolio, setShowPortfolio] = useState(true);
   const [user, setUser] = useState(null);
   const [active, setActive] = useState('Dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -3016,6 +3018,7 @@ useEffect(() => {
 async function handleVoucherSaved() {
   await loadTodayTransactions();
 }
+  if (showPortfolio) return <PortfolioDashboard onOpenSchool={() => setShowPortfolio(false)} />;
   if (!user) return <LoginSystem onLogin={setUser} />;
 
   const pageTitle = active === 'Dashboard'
@@ -3068,6 +3071,7 @@ async function handleVoucherSaved() {
           <div style={{ flex: 1, color: '#a8b6d2', fontSize: '14px' }}>
             Workspace / <strong style={{ color: '#f4f7ff' }}>{pageTitle}</strong>
           </div>
+          <button style={styles.secondaryButton} onClick={() => setShowPortfolio(true)} title="Return to portfolio">Portfolio</button>
 
           <div style={styles.searchContainer}>
             <Search size={16} color="#64748b" />
