@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import profilePhoto from '../assets/profile.jpg';
 import { ArrowUpRight, Code2, Database, GraduationCap, Mail, Menu, Monitor, Sparkles } from 'lucide-react';
 
 const projects = [
@@ -53,7 +54,7 @@ export default function PortfolioDashboard({ onOpenSchool }) {
         .amar-visual{position:relative;min-height:330px;display:grid;place-items:center}
         .amar-orbit{width:290px;height:290px;border-radius:50%;border:1px solid #31466a;display:grid;place-items:center;box-shadow:0 0 90px #3463a326,inset 0 0 55px #263d622b;position:relative}
         .amar-orbit:before,.amar-orbit:after{content:'';position:absolute;border:1px dashed #38577b;border-radius:50%;inset:22px}.amar-orbit:after{inset:-20px;border-color:#273b59}
-        .amar-monogram{width:178px;height:178px;border-radius:42px;display:grid;place-items:center;background:linear-gradient(145deg,#1c4770,#493c83);font:800 58px Manrope,sans-serif;color:#fff;box-shadow:0 25px 65px #0008;border:1px solid #7594c0}
+        .amar-profile-photo{width:178px;height:178px;border-radius:50%;object-fit:cover;display:block;box-shadow:0 25px 65px #0008;border:1px solid #7594c0}
         .amar-float{position:absolute;padding:10px 14px;border-radius:12px;background:#131d30;border:1px solid #2d3e5b;color:#dbe8ff;font-size:12px;font-weight:700;box-shadow:0 10px 30px #0005}
         .amar-float.one{top:30px;right:0}.amar-float.two{bottom:42px;left:0}
         .amar-section{padding:72px 0;border-top:1px solid #1d2638}
@@ -97,7 +98,7 @@ export default function PortfolioDashboard({ onOpenSchool }) {
               </div>
             </div>
             <div className="amar-visual" aria-label="Amar Bartaula portfolio monogram">
-              <div className="amar-orbit"><div className="amar-monogram">AB</div></div>
+              <div className="amar-orbit"><img className="amar-profile-photo" src={profilePhoto} alt="Amar Bartaula" /></div>
               <div className="amar-float one"><Code2 size={14} style={{display:'inline',verticalAlign:'middle',marginRight:6}}/> Software Projects</div>
               <div className="amar-float two"><Database size={14} style={{display:'inline',verticalAlign:'middle',marginRight:6}}/> Digital Systems</div>
             </div>
