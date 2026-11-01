@@ -762,7 +762,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
         <div className="ex-two-col">
           {panel(editingExamId ? t('editExam') : t('createExam'), lang === 'ne' ? 'कक्षा ४–५ को template सिकाइ उपलब्धि केन्द्रित हुन्छ; ६–८ विषयगत र ९–१० औपचारिक मार्कसिट template हो।' : 'Template is grade-specific. Grading thresholds are not assumed.', <form onSubmit={createExam} className="ex-grid">
             {field(t('selectYear'),select(examForm.academicYearId,v=>setExamForm(f=>({...f,academicYearId:v})),years.map(y=>({value:y.id,label:y.year_name})),t('select')))}
-            {field(t('grade'),select(examForm.grade,v=>setExamForm(f=>({...f,grade:Number(v)})),GRADES.map(g=>({value:g,label:`${lang==='ne'?'कक्षा':'Grade'} ${g}`})),undefined, { disabled: Boolean(editingExamId) }))}
+            {field(t('grade'),select(examForm.grade,v=>setExamForm(f=>({...f,grade:Number(v)})),GRADES.map(g=>({value:g,label:`${lang==='ne'?'कक्षा':'Grade'} ${g}`})),undefined, Boolean(editingExamId)))}
             {field(t('examNameEn'),input(examForm.examNameEn,v=>setExamForm(f=>({...f,examNameEn:v})),{required:true}))}
             {field(t('examNameNe'),input(examForm.examNameNe,v=>setExamForm(f=>({...f,examNameNe:v})),{required:true}))}
             {field(t('examType'),select(examForm.examType,v=>setExamForm(f=>({...f,examType:v})),[{value:'unit',label:'Unit Test'},{value:'terminal',label:'Terminal'},{value:'annual',label:'Annual'},{value:'final',label:'Final'},{value:'practical',label:'Practical'},{value:'other',label:'Other'}]))}
