@@ -2345,6 +2345,68 @@ app.post('/api/exams', async (req, res) => {
   } catch (err) { console.error('Create exam error:', err.message); res.status(500).json({ message: 'Could not create examination.' }); }
 });
 
+app.put('/api/exams/:examId', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const orgId = req.examActor.organizationId;
+    const examId = Number(req.params.examId);
+    if (!isValidOrganizationId(examId)) return res.status(400).json({ message: 'Valid exam ID required.' });
+    if (!['admin', 'exam_coordinator'].includes(req.examActor.role)) {
+      return res.status(403).json({ message: 'Only examination admin/coordinator can edit exam setup.' });
+    }
+    const { academicYearId, examNameEn, examNameNe, examType = 'terminal', examDate = null, examDateBs = '' } = req.body || {};
+    const yearId = Number(academicYearId);
+    const allowedTypes = ['terminal', 'unit', 'annual', 'final', 'practical', 'other'];
+    if (!isValidOrganizationId(yearId) || !String(examNameEn || '').trim() || !String(examNameNe || '').trim() ||
+        !allowedTypes.includes(examType) || (examDate && !isValidDate(examDate))) {
+      return res.status(400).json({ message: 'Academic year, bilingual exam names, valid type and date are required.' });
+    }
+    const yearCheck = await client.query('SELECT id FROM public.exam_academic_years WHERE id=$1 AND organization_id=$2', [yearId, orgId]);
+    if (!yearCheck.rowCount) return res.status(400).json({ message: 'Academic year not found.' });
+
+    await client.query('BEGIN');
+    const before = await client.query('SELECT * FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
+    if (!before.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Exam not found.' });
+    }
+    const old = before.rows[0];
+    if (old.status !== 'draft') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'परीक्षा सम्पादन गर्न पहिले status Draft मा फर्काउनुहोस्। Approved/locked/published परीक्षा सम्पादन गर्न मिल्दैन।' });
+    }
+    const duplicate = await client.query(
+      `SELECT id FROM public.exam_exams
+       WHERE organization_id=$1 AND academic_year_id=$2 AND grade=$3 AND id<>$4
+         AND class_name=$5 AND section IS NULL
+         AND LOWER(TRIM(exam_name_en))=LOWER(TRIM($6)) AND exam_type=$7 AND status='draft'
+       LIMIT 1`,
+      [orgId, yearId, old.grade, examId, old.class_name, String(examNameEn).trim(), examType]
+    );
+    if (duplicate.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'यस कक्षा र शैक्षिक सत्रमा यही नाम/प्रकारको Draft Exam पहिले नै छ।' });
+    }
+    const updated = await client.query(
+      `UPDATE public.exam_exams
+       SET academic_year_id=$3, exam_name_en=$4, exam_name_ne=$5, exam_type=$6,
+           exam_date=$7::date, exam_date_bs=NULLIF($8,''), updated_at=NOW()
+       WHERE id=$1 AND organization_id=$2 RETURNING *`,
+      [examId, orgId, yearId, String(examNameEn).trim(), String(examNameNe).trim(), examType, examDate || null, String(examDateBs).trim()]
+    );
+    await writeExamHistory(client, {
+      organizationId: orgId, examId, actor: req.examActor, action: 'exam_setup_edited',
+      oldValue: old, newValue: updated.rows[0]
+    });
+    await client.query('COMMIT');
+    return res.json(updated.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Exam setup edit error:', err.message);
+    return res.status(500).json({ message: 'Could not update examination setup.' });
+  } finally { client.release(); }
+});
+
 app.post('/api/exams/:examId/subjects', async (req, res) => {
   try {
     const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
