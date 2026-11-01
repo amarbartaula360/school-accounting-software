@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import profilePhoto from '../assets/profile.jpg';
-import { ArrowUpRight, Code2, Database, GraduationCap, Mail, Menu, Monitor, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Code2, Database, GraduationCap, Mail, Menu, Monitor, PhoneCall, Sparkles } from 'lucide-react';
 
 const projects = [
   {
@@ -19,6 +19,14 @@ const projects = [
     icon: Database
   },
   {
+    title: 'UEBS Fee Reminder System',
+    category: 'School Systems',
+    description: 'United English Boarding School का विद्यार्थी शुल्क, बाँकी रकम, अभिभावक सम्पर्क तथा SMS/voice reminder workflow व्यवस्थापनका लागि बनाइएको prototype।',
+    status: 'Prototype',
+    icon: PhoneCall,
+    href: 'https://github.com/amarbartaula360/uebs-calling-system'
+  },
+  {
     title: 'Web Applications',
     category: 'Development',
     description: 'व्यवसाय तथा संस्थाका आवश्यकताअनुसार आधुनिक वेब समाधान निर्माण गर्ने कार्यक्षेत्र।',
@@ -30,7 +38,7 @@ const projects = [
 export default function PortfolioDashboard({ onOpenSchool }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState('All');
-  const filters = ['All', 'Currently Working', 'Accounting', 'Development'];
+  const filters = ['All', 'Currently Working', 'Accounting', 'School Systems', 'Development'];
   const visibleProjects = projects.filter(project => activeFilter === 'All' || project.category === activeFilter);
 
   return (
@@ -118,7 +126,7 @@ export default function PortfolioDashboard({ onOpenSchool }) {
               {visibleProjects.map(project=>{const Icon=project.icon;return <article className={`amar-project ${project.featured?'featured':''}`} key={project.title}>
                 <div className="amar-project-top"><div className="amar-project-icon"><Icon size={21}/></div><span className="amar-status">{project.status}</span></div>
                 <h3>{project.title}</h3><p>{project.description}</p>
-                {project.featured?<button className="amar-btn primary" onClick={onOpenSchool}>Open School Management System <ArrowUpRight size={15}/></button>:<span className="amar-note">{project.category}</span>}
+                {project.featured?<button className="amar-btn primary" onClick={onOpenSchool}>Open School Management System <ArrowUpRight size={15}/></button>:project.href?<a className="amar-btn primary" href={project.href} target="_blank" rel="noreferrer">View Project Prototype <ArrowUpRight size={15}/></a>:<span className="amar-note">{project.category}</span>}
               </article>})}
             </div>
           </section>
