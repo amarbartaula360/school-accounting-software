@@ -2980,6 +2980,7 @@ function requireAdmin(req, res, next) {
 // ---------------- Admin User Management API ----------------
 
 const USER_ROLES = [
+  'admin',
   'principal',
   'accountant',
   'cashier',
@@ -3121,7 +3122,8 @@ app.put('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) => {
   let client;
   try {
     const userId = Number(req.params.id);
-    const { fullName, email, role, examRole = 'none', permissions } = req.body || {};
+    const { fullName, email, role, examRole = 'none' } = req.body || {};
+    const permissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
     const cleanName = String(fullName || '').trim();
     const cleanEmail = String(email || '').trim().toLowerCase();
     const allowedExamRoles = ['none', 'admin', 'principal', 'exam_coordinator', 'teacher'];
