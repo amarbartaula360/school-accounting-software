@@ -560,6 +560,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
   const [journalEntries, setJournalEntries] = useState([]);
   const [loadingEntries, setLoadingEntries] = useState(true);
   const [registerError, setRegisterError] = useState('');
+  const [editingVoucherId, setEditingVoucherId] = useState(null);
 
   const totalDebit = rows.reduce(
     (sum, r) => sum + (Number(r.debit) || 0),
@@ -727,6 +728,28 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
     setRows(current => current.filter((_, i) => i !== index));
   }
 
+  async function startEditVoucher(entry) {
+    setError(''); setSuccess('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/journal-entries/${entry.id}?organizationId=${ORGANIZATION_ID}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Voucher विवरण लोड गर्न सकिएन।');
+      const adDate = String(data.entry.entry_date || '').slice(0, 10);
+      setEditingVoucherId(Number(entry.id));
+      setVoucherNumber(data.entry.voucher_number || '');
+      setEntryDate(adDate);
+      setBsDate(toBS(adDate));
+      setDescription(data.entry.description || '');
+      setRows((data.lines || []).map(line => ({ accountId: String(line.account_id), debit: Number(line.debit) ? String(Number(line.debit)) : '', credit: Number(line.credit) ? String(Number(line.credit)) : '' })));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) { setError(err.message || 'Voucher edit खोल्न सकिएन।'); }
+  }
+
+  function cancelVoucherEdit() {
+    setEditingVoucherId(null); setDescription('');
+    setRows([{ accountId: '', debit: '', credit: '' }, { accountId: '', debit: '', credit: '' }]);
+    setError(''); setSuccess(''); loadNextVoucherNumber(entryDate);
+  }
   async function saveVoucher(e) {
     e.preventDefault();
     setError('');
@@ -778,9 +801,9 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
 
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/journal-entries`,
+        `${API_BASE_URL}/api/journal-entries${editingVoucherId ? `/${editingVoucherId}` : ''}`,
         {
-          method: 'POST',
+          method: editingVoucherId ? 'PUT' : 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
@@ -821,7 +844,8 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
         positive: true
       });
 
-      setSuccess(`Journal Voucher ${savedVoucherNumber} सफलतापूर्वक सुरक्षित भयो!`);
+      setSuccess(editingVoucherId ? `Journal Voucher ${savedVoucherNumber} सफलतापूर्वक परिवर्तन भयो!` : `Journal Voucher ${savedVoucherNumber} सफलतापूर्वक सुरक्षित भयो!`);
+      setEditingVoucherId(null);
       setDescription('');
       setRows([
         { accountId: '', debit: '', credit: '' },
@@ -1030,7 +1054,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
           {error && <Notice type="error" message={error} />}
           {success && <Notice type="success" message={success} />}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: '16px' }}>
             <button
               type="submit"
               style={{
@@ -1040,8 +1064,9 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
               }}
               disabled={saving || !balanced}
             >
-              {saving ? 'सुरक्षित गर्दै...' : 'Save Voucher / भौचर सुरक्षित गर्नुहोस्'}
+              {saving ? 'सुरक्षित गर्दै...' : editingVoucherId ? 'Update Voucher / भौचर परिवर्तन गर्नुहोस्' : 'Save Voucher / भौचर सुरक्षित गर्नुहोस्'}
             </button>
+            {editingVoucherId && <button type="button" style={styles.secondaryButton} onClick={cancelVoucherEdit} disabled={saving}>Cancel Edit</button>}
           </div>
         </form>
       </section>
@@ -1086,6 +1111,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                   <th>Debit (Rs.)</th>
                   <th>Credit (Rs.)</th>
                   <th>Status</th>
+                  <th>Action</th>
                 </tr>
               </thead>
 
@@ -1108,12 +1134,13 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                         {entry.status || 'Posted'}
                       </span>
                     </td>
+                    <td>{entry.voucher_type === 'journal' && <button type="button" style={styles.secondaryButton} onClick={() => startEditVoucher(entry)}>Edit</button>}</td>
                   </tr>
                 ))}
 
                 {journalEntries.length === 0 && (
                   <tr>
-                    <td colSpan="7" style={styles.emptyCell}>
+                    <td colSpan="8" style={styles.emptyCell}>
                       अहिलेसम्म कुनै Journal Voucher रेकर्ड गरिएको छैन।
                     </td>
                   </tr>
