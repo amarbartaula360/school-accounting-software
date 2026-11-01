@@ -17,6 +17,7 @@ export default function UserAccessModule({ apiBaseUrl }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('accountant');
+  const [examRole, setExamRole] = useState('none');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -43,10 +44,10 @@ export default function UserAccessModule({ apiBaseUrl }) {
     try {
       await request('/api/admin/users', {
   method: 'POST',
-  body: JSON.stringify({ fullName, email, password, role, permissions: [] })
+  body: JSON.stringify({ fullName, email, password, role, examRole, permissions: [] })
 });
       setNotice(`${email} का लागि छुट्टै login तयार भयो।`);
-      setFullName(''); setEmail(''); setPassword(''); setRole('accountant');
+      setFullName(''); setEmail(''); setPassword(''); setRole('accountant'); setExamRole('none');
       await loadUsers();
     } catch (err) { setError(err.message || 'नयाँ login बनाउन सकिएन।'); }
     finally { setLoading(false); }
@@ -74,7 +75,8 @@ export default function UserAccessModule({ apiBaseUrl }) {
           <label>पूरा नाम<input value={fullName} onChange={e => setFullName(e.target.value)} required style={inputStyle} /></label>
           <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} /></label>
           <label>Temporary password<input type="password" value={password} onChange={e => setPassword(e.target.value)} minLength={12} required style={inputStyle} /></label>
-          <label>Role<select value={role} onChange={e => setRole(e.target.value)} style={inputStyle}>{ROLES.map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>Accounting / General Role<select value={role} onChange={e => setRole(e.target.value)} style={inputStyle}>{ROLES.map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>Examination &amp; Marksheet Role<select value={examRole} onChange={e => setExamRole(e.target.value)} style={inputStyle}><option value="none">No Access / पहुँच छैन</option><option value="admin">Admin / प्रशासक</option><option value="principal">Principal / प्रधानाध्यापक</option><option value="exam_coordinator">Exam Coordinator / परीक्षा संयोजक</option><option value="teacher">Teacher / शिक्षक</option></select></label>
           <button type="submit" disabled={loading} style={buttonStyle}>{loading ? 'Saving...' : 'नयाँ Login बनाउनुहोस्'}</button>
         </form>
       </section>
@@ -83,13 +85,14 @@ export default function UserAccessModule({ apiBaseUrl }) {
           <h3>प्रयोगकर्ता सूची</h3><button type="button" onClick={loadUsers} style={buttonStyle}>Refresh</button>
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr>{['नाम','Email','Role','स्थिति','अन्तिम Login','कार्य'].map(x => <th key={x} style={thStyle}>{x}</th>)}</tr></thead>
+          <thead><tr>{['नाम','Email','General Role','Examination Role','स्थिति','अन्तिम Login','कार्य'].map(x => <th key={x} style={thStyle}>{x}</th>)}</tr></thead>
           <tbody>{users.map(user => <tr key={user.id}>
             <td style={tdStyle}>{user.full_name}</td><td style={tdStyle}>{user.email}</td><td style={tdStyle}>{user.role}</td>
+            <td style={tdStyle}>{({ admin: 'Admin', principal: 'Principal', exam_coordinator: 'Exam Coordinator', teacher: 'Teacher', none: 'No Access' })[user.exam_role || 'none']}</td>
             <td style={tdStyle}>{user.is_active ? 'Active' : 'Inactive'}</td>
             <td style={tdStyle}>{user.last_login_at ? new Date(user.last_login_at).toLocaleString() : 'अहिलेसम्म login छैन'}</td>
             <td style={tdStyle}><button type="button" onClick={() => toggleActive(user)} disabled={loading} style={buttonStyle}>{user.is_active ? 'Deactivate' : 'Activate'}</button></td>
-          </tr>)}{!users.length && <tr><td style={tdStyle} colSpan="6">{loading ? 'Loading...' : 'प्रयोगकर्ता छैनन्।'}</td></tr>}</tbody>
+          </tr>)}{!users.length && <tr><td style={tdStyle} colSpan="7">{loading ? 'Loading...' : 'प्रयोगकर्ता छैनन्।'}</td></tr>}</tbody>
         </table>
       </section>
     </div>
