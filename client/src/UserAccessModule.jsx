@@ -21,6 +21,7 @@ export default function UserAccessModule({ apiBaseUrl }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [editingUser, setEditingUser] = useState(null);
 
   async function request(path, options = {}) {
     const response = await apiFetch(`${apiBaseUrl}${path}`, {
@@ -50,6 +51,19 @@ export default function UserAccessModule({ apiBaseUrl }) {
       setFullName(''); setEmail(''); setPassword(''); setRole('accountant'); setExamRole('none');
       await loadUsers();
     } catch (err) { setError(err.message || 'नयाँ login बनाउन सकिएन।'); }
+    finally { setLoading(false); }
+  }
+  async function saveUserEdit(event) {
+    event.preventDefault(); setError(''); setNotice(''); setLoading(true);
+    try {
+      await request('/api/admin/users/' + editingUser.id, {
+        method: 'PUT',
+        body: JSON.stringify({ fullName: editingUser.full_name, email: editingUser.email, role: editingUser.role, examRole: editingUser.exam_role || 'none', permissions: editingUser.permissions || [] })
+      });
+      setNotice(editingUser.email + ' को विवरण परिवर्तन गरियो।');
+      setEditingUser(null);
+      await loadUsers();
+    } catch (err) { setError(err.message || 'User विवरण परिवर्तन गर्न सकिएन।'); }
     finally { setLoading(false); }
   }
   async function toggleActive(user) {
@@ -84,6 +98,16 @@ export default function UserAccessModule({ apiBaseUrl }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>प्रयोगकर्ता सूची</h3><button type="button" onClick={loadUsers} style={buttonStyle}>Refresh</button>
         </div>
+        {editingUser && (
+          <form onSubmit={saveUserEdit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12, padding: 14, marginBottom: 16, border: '1px solid #475569', borderRadius: 10 }}>
+            <strong style={{ gridColumn: '1 / -1' }}>प्रयोगकर्ता विवरण सम्पादन / Edit User</strong>
+            <label>पूरा नाम<input value={editingUser.full_name || ''} onChange={e => setEditingUser(u => ({ ...u, full_name: e.target.value }))} required style={inputStyle} /></label>
+            <label>Email<input type="email" value={editingUser.email || ''} onChange={e => setEditingUser(u => ({ ...u, email: e.target.value }))} required style={inputStyle} /></label>
+            <label>Accounting / General Role<select value={editingUser.role || 'accountant'} onChange={e => setEditingUser(u => ({ ...u, role: e.target.value }))} style={inputStyle}>{ROLES.map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label>Examination Role<select value={editingUser.exam_role || 'none'} onChange={e => setEditingUser(u => ({ ...u, exam_role: e.target.value }))} style={inputStyle}><option value="none">No Access / पहुँच छैन</option><option value="admin">Admin / प्रशासक</option><option value="principal">Principal / प्रधानाध्यापक</option><option value="exam_coordinator">Exam Coordinator / परीक्षा संयोजक</option><option value="teacher">Teacher / शिक्षक</option></select></label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}><button type="submit" disabled={loading} style={buttonStyle}>{loading ? 'Saving...' : 'Save Changes'}</button><button type="button" onClick={() => setEditingUser(null)} style={{ ...buttonStyle, background: '#475569' }}>Cancel</button></div>
+          </form>
+        )}
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr>{['नाम','Email','General Role','Examination Role','स्थिति','अन्तिम Login','कार्य'].map(x => <th key={x} style={thStyle}>{x}</th>)}</tr></thead>
           <tbody>{users.map(user => <tr key={user.id}>
@@ -91,7 +115,7 @@ export default function UserAccessModule({ apiBaseUrl }) {
             <td style={tdStyle}>{({ admin: 'Admin', principal: 'Principal', exam_coordinator: 'Exam Coordinator', teacher: 'Teacher', none: 'No Access' })[user.exam_role || 'none']}</td>
             <td style={tdStyle}>{user.is_active ? 'Active' : 'Inactive'}</td>
             <td style={tdStyle}>{user.last_login_at ? new Date(user.last_login_at).toLocaleString() : 'अहिलेसम्म login छैन'}</td>
-            <td style={tdStyle}><button type="button" onClick={() => toggleActive(user)} disabled={loading} style={buttonStyle}>{user.is_active ? 'Deactivate' : 'Activate'}</button></td>
+            <td style={tdStyle}><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}><button type="button" onClick={() => setEditingUser({ ...user, exam_role: user.exam_role || 'none' })} disabled={loading} style={{ ...buttonStyle, background: '#2563eb' }}>Edit</button><button type="button" onClick={() => toggleActive(user)} disabled={loading} style={buttonStyle}>{user.is_active ? 'Deactivate' : 'Activate'}</button></div></td>
           </tr>)}{!users.length && <tr><td style={tdStyle} colSpan="7">{loading ? 'Loading...' : 'प्रयोगकर्ता छैनन्।'}</td></tr>}</tbody>
         </table>
       </section>
