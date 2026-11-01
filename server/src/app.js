@@ -2871,11 +2871,16 @@ function validUserPermissions(permissions) {
 app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, full_name, email, role, permissions,
-              is_active, created_at, last_login_at
-       FROM app_users
-       WHERE organization_id = $1
-       ORDER BY id`,
+      `SELECT u.id, u.full_name, u.email, u.role, u.permissions,
+              u.is_active, u.created_at, u.last_login_at,
+              COALESCE(era.role, 'none') AS exam_role
+       FROM app_users u
+       LEFT JOIN public.exam_role_assignments era
+         ON era.organization_id = u.organization_id
+        AND LOWER(era.user_email) = LOWER(u.email)
+        AND era.is_active = TRUE
+       WHERE u.organization_id = $1
+       ORDER BY u.id`,
       [req.authUser.organization_id]
     );
 
@@ -2887,80 +2892,40 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // 2. Create new user
-app.post('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const {
-      fullName,
-      email,
-      password,
-      role,
-      permissions = []
-    } = req.body || {};
-
-    const cleanName = String(fullName || '').trim();
-    const cleanEmail = String(email || '').trim().toLowerCase();
-
-    if (!cleanName || !cleanEmail.includes('@')) {
-      return res.status(400).json({
-        message: 'Name र valid Email आवश्यक छ।'
-      });
+     [req.authUser.organization_id, cleanEmail]
+      );
+    } else {
+      await client.query(
+        `INSERT INTO public.exam_role_assignments
+           (organization_id, user_email, role, is_active, assigned_by_email)
+         VALUES ($1, $2, $3, TRUE, $4)
+         ON CONFLICT (organization_id, user_email)
+         DO UPDATE SET role = EXCLUDED.role, is_active = TRUE,
+                       assigned_by_email = EXCLUDED.assigned_by_email`,
+        [req.authUser.organization_id, cleanEmail, examRole, req.authUser.email]
+      );
     }
 
-    if (typeof password !== 'string' || password.length < 12) {
-      return res.status(400).json({
-        message: 'Password कम्तीमा 12 characters हुनुपर्छ।'
-      });
-    }
-
-    if (!USER_ROLES.includes(role)) {
-      return res.status(400).json({
-        message: 'Invalid User Role।'
-      });
-    }
-
-    if (!validUserPermissions(permissions)) {
-      return res.status(400).json({
-        message: 'Invalid Module Permissions।'
-      });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    const result = await pool.query(
-      `INSERT INTO app_users
-        (organization_id, full_name, email, password_hash,
-         role, permissions, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW(), NOW())
-       RETURNING id, full_name, email, role, permissions,
-                 is_active, created_at`,
-      [
-        req.authUser.organization_id,
-        cleanName,
-        cleanEmail,
-        passwordHash,
-        role,
-        permissions
-      ]
-    );
-
+    await client.query('COMMIT');
     res.status(201).json({
       message: 'नयाँ User सफलतापूर्वक सिर्जना भयो।',
-      user: result.rows[0]
+      user: { ...result.rows[0], exam_role: examRole }
     });
-
   } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     if (error.code === '23505') {
-      return res.status(409).json({
-        message: 'यो Email पहिले नै प्रयोग भएको छ।'
-      });
+      return res.status(409).json({ message: 'यो Email पहिले नै प्रयोग भएको छ।' });
     }
-
+    if (error.code === '42P01') {
+      return res.status(500).json({ message: 'Examination role table छैन। पहिले database/examination_module_migration.sql चलाउनुहोस्।' });
+    }
     console.error('Create user error:', error.message);
-    res.status(500).json({
-      message: 'User बनाउन समस्या आयो।'
-    });
+    res.status(500).json({ message: 'User बनाउन समस्या आयो।' });
+  } finally {
+    client?.release();
   }
 });
+
 // ---------------- Admin User Update API ----------------
 
 // 1. Edit User
