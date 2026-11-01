@@ -615,8 +615,8 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
 
   // Preview updates for the selected entry date. Backend generates the final serial on save.
   useEffect(() => {
-    loadNextVoucherNumber(entryDate);
-  }, [entryDate]);
+    if (!editingVoucherId) loadNextVoucherNumber(entryDate);
+  }, [entryDate, editingVoucherId]);
 
   async function loadJournalEntries() {
     setLoadingEntries(true);
