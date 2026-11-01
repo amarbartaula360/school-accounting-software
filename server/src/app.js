@@ -2871,7 +2871,7 @@ function validUserPermissions(permissions) {
 app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, u.role, u.permissions,
+      \`SELECT u.id, u.full_name, u.email, u.role, u.permissions,
               u.is_active, u.created_at, u.last_login_at,
               COALESCE(era.role, 'none') AS exam_role
        FROM app_users u
@@ -2880,10 +2880,9 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
         AND LOWER(era.user_email) = LOWER(u.email)
         AND era.is_active = TRUE
        WHERE u.organization_id = $1
-       ORDER BY u.id`,
+       ORDER BY u.id\`,
       [req.authUser.organization_id]
     );
-
     res.json(result.rows);
   } catch (error) {
     console.error('User list error:', error.message);
@@ -2892,16 +2891,58 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // 2. Create new user
-     [req.authUser.organization_id, cleanEmail]
+app.post('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+  let client;
+  try {
+    const { fullName, email, password, role, examRole = 'none', permissions = [] } = req.body || {};
+    const cleanName = String(fullName || '').trim();
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const allowedExamRoles = ['none', 'admin', 'principal', 'exam_coordinator', 'teacher'];
+
+    if (!cleanName || !/^\S+@\S+\.\S+$/.test(cleanEmail)) {
+      return res.status(400).json({ message: 'Name र valid Email आवश्यक छ।' });
+    }
+    if (typeof password !== 'string' || password.length < 12) {
+      return res.status(400).json({ message: 'Password कम्तीमा 12 characters हुनुपर्छ।' });
+    }
+    if (!USER_ROLES.includes(role)) {
+      return res.status(400).json({ message: 'Invalid User Role।' });
+    }
+    if (!allowedExamRoles.includes(examRole)) {
+      return res.status(400).json({ message: 'Invalid Examination Role।' });
+    }
+    if (!validUserPermissions(permissions)) {
+      return res.status(400).json({ message: 'Invalid Module Permissions।' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    client = await pool.connect();
+    await client.query('BEGIN');
+
+    const result = await client.query(
+      \`INSERT INTO app_users
+        (organization_id, full_name, email, password_hash,
+         role, permissions, is_active, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW(), NOW())
+       RETURNING id, full_name, email, role, permissions, is_active, created_at\`,
+      [req.authUser.organization_id, cleanName, cleanEmail, passwordHash, role, permissions]
+    );
+
+    if (examRole === 'none') {
+      await client.query(
+        \`UPDATE public.exam_role_assignments
+         SET is_active = FALSE
+         WHERE organization_id = $1 AND LOWER(user_email) = $2\`,
+        [req.authUser.organization_id, cleanEmail]
       );
     } else {
       await client.query(
-        `INSERT INTO public.exam_role_assignments
+        \`INSERT INTO public.exam_role_assignments
            (organization_id, user_email, role, is_active, assigned_by_email)
          VALUES ($1, $2, $3, TRUE, $4)
          ON CONFLICT (organization_id, user_email)
          DO UPDATE SET role = EXCLUDED.role, is_active = TRUE,
-                       assigned_by_email = EXCLUDED.assigned_by_email`,
+                       assigned_by_email = EXCLUDED.assigned_by_email\`,
         [req.authUser.organization_id, cleanEmail, examRole, req.authUser.email]
       );
     }
