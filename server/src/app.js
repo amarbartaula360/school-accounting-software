@@ -425,6 +425,155 @@ app.post('/api/journal-entries', async (req, res) => {
   }
 });
 
+// Read a journal voucher and its lines for editing.
+app.get('/api/journal-entries/:id', async (req, res) => {
+  try {
+    const { organizationId } = req.query;
+    const entryId = Number(req.params.id);
+    if (!isValidOrganizationId(organizationId) || !Number.isSafeInteger(entryId) || entryId <= 0) {
+      return res.status(400).json({ message: 'Valid organizationId and voucher ID are required.' });
+    }
+    const entryResult = await pool.query(
+      `SELECT id, organization_id, financial_year_id, entry_date, voucher_number,
+              voucher_type, description, status
+       FROM journal_entries
+       WHERE id = $1 AND organization_id = $2 AND voucher_type = 'journal'`,
+      [entryId, Number(organizationId)]
+    );
+    if (!entryResult.rowCount) return res.status(404).json({ message: 'Journal Voucher भेटिएन।' });
+    const linesResult = await pool.query(
+      `SELECT l.account_id, a.code AS account_code, a.name AS account_name,
+              l.debit, l.credit
+       FROM journal_lines l
+       JOIN accounts a ON a.id = l.account_id
+       WHERE l.journal_entry_id = $1
+       ORDER BY l.id`,
+      [entryId]
+    );
+    return res.json({ entry: entryResult.rows[0], lines: linesResult.rows });
+  } catch (err) {
+    console.error('Journal voucher detail error:', err.message);
+    return res.status(500).json({ message: 'Voucher विवरण लोड गर्न सकिएन।' });
+  }
+});
+
+// Edit a posted journal voucher; preserve voucher number and write an audit snapshot.
+app.put('/api/journal-entries/:id', async (req, res) => {
+  const { organizationId, entryDate, description, lines } = req.body || {};
+  const entryId = Number(req.params.id);
+  if (!isValidOrganizationId(organizationId) || !Number.isSafeInteger(entryId) || entryId <= 0 ||
+      !isValidDate(entryDate) || typeof description !== 'string' || !description.trim() ||
+      !Array.isArray(lines) || lines.length < 2) {
+    return res.status(400).json({ message: 'Organization, valid date, description and at least two voucher lines are required.' });
+  }
+  let totalDebit = 0;
+  let totalCredit = 0;
+  const accountIds = [];
+  for (const line of lines) {
+    const accountId = Number(line.accountId);
+    const debit = Number(line.debit ?? 0);
+    const credit = Number(line.credit ?? 0);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0 || !validMoney(debit) || !validMoney(credit) ||
+        (debit > 0 && credit > 0) || (debit === 0 && credit === 0)) {
+      return res.status(400).json({ message: 'हरेक पङ्क्तिमा मान्य Ledger Account र Debit वा Credit रकम राख्नुहोस्।' });
+    }
+    totalDebit += Math.round(debit * 100);
+    totalCredit += Math.round(credit * 100);
+    accountIds.push(accountId);
+  }
+  if (totalDebit === 0 || totalDebit !== totalCredit) {
+    return res.status(400).json({ message: 'कुल Debit र Credit बराबर हुनुपर्छ।' });
+  }
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const entryResult = await client.query(
+      `SELECT * FROM journal_entries
+       WHERE id = $1 AND organization_id = $2 AND voucher_type = 'journal'
+       FOR UPDATE`,
+      [entryId, Number(organizationId)]
+    );
+    if (!entryResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Journal Voucher भेटिएन।' });
+    }
+    const oldEntry = entryResult.rows[0];
+    if (oldEntry.status !== 'posted') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Posted भएको Journal Voucher मात्र edit गर्न मिल्छ।' });
+    }
+    const oldLinesResult = await client.query(
+      `SELECT account_id, debit, credit FROM journal_lines
+       WHERE journal_entry_id = $1 ORDER BY id`,
+      [entryId]
+    );
+    const uniqueAccountIds = [...new Set(accountIds)];
+    const validAccounts = await client.query(
+      `SELECT id FROM accounts
+       WHERE organization_id = $1 AND is_active = TRUE AND is_group = FALSE
+         AND id = ANY($2::bigint[])
+       FOR SHARE`,
+      [Number(organizationId), uniqueAccountIds]
+    );
+    if (validAccounts.rowCount !== uniqueAccountIds.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'कुनै Ledger Account अमान्य, inactive वा अर्को संस्थाको छ।' });
+    }
+    const fy = await client.query(
+      `SELECT id FROM financial_years
+       WHERE organization_id = $1 AND start_date <= $2::date
+         AND end_date >= $2::date AND is_closed = FALSE
+       ORDER BY start_date DESC LIMIT 1`,
+      [Number(organizationId), entryDate]
+    );
+    if (!fy.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'यो मितिका लागि खुला आर्थिक वर्ष भेटिएन।' });
+    }
+    const oldSnapshot = { entry: oldEntry, lines: oldLinesResult.rows };
+    await client.query(
+      `UPDATE journal_entries
+       SET entry_date = $1, financial_year_id = $2, description = $3
+       WHERE id = $4 AND organization_id = $5`,
+      [entryDate, fy.rows[0].id, description.trim(), entryId, Number(organizationId)]
+    );
+    await client.query('DELETE FROM journal_lines WHERE journal_entry_id = $1', [entryId]);
+    for (const line of lines) {
+      await client.query(
+        `INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit)
+         VALUES ($1, $2, $3, $4)`,
+        [entryId, Number(line.accountId), Number(line.debit ?? 0), Number(line.credit ?? 0)]
+      );
+    }
+    const newEntryResult = await client.query('SELECT * FROM journal_entries WHERE id = $1', [entryId]);
+    const newLinesResult = await client.query(
+      `SELECT account_id, debit, credit FROM journal_lines
+       WHERE journal_entry_id = $1 ORDER BY id`,
+      [entryId]
+    );
+    await client.query(
+      `INSERT INTO public.journal_entry_audit
+         (organization_id, journal_entry_id, actor_email, action, old_value, new_value, note)
+       VALUES ($1, $2, $3, 'updated', $4::jsonb, $5::jsonb, $6)`,
+      [Number(organizationId), entryId, req.headers['x-user-email'] || null,
+       JSON.stringify(oldSnapshot),
+       JSON.stringify({ entry: newEntryResult.rows[0], lines: newLinesResult.rows }),
+       'Journal Voucher edited from voucher register']
+    );
+    await client.query('COMMIT');
+    return res.json({ ok: true, message: 'Journal Voucher सफलतापूर्वक परिवर्तन भयो।', entry: newEntryResult.rows[0], totalDebit: totalDebit / 100, totalCredit: totalCredit / 100 });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Journal voucher edit error:', err.message);
+    if (err.code === '42P01') return res.status(500).json({ message: 'Voucher audit table छैन। database/access_control_and_voucher_audit.sql चलाउनुहोस्।' });
+    if (err.code === '23503') return res.status(400).json({ message: 'Database reference error. Organization, financial year र account जाँच्नुहोस्।' });
+    return res.status(500).json({ message: 'Journal Voucher edit गर्न सकिएन।' });
+  } finally {
+    client?.release();
+  }
+});
+
 // Journal register: aggregate debit/credit lines per voucher and sort serial vouchers numerically.
 app.get('/api/journal-entries', async (req, res) => {
   try {
