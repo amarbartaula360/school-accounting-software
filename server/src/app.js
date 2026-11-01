@@ -2968,63 +2968,72 @@ app.post('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ---------------- Admin User Update API ----------------
-
-// 1. Edit User
 app.put('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  let client;
   try {
     const userId = Number(req.params.id);
-    const { fullName, email, role, permissions } = req.body || {};
+    const { fullName, email, role, examRole = 'none', permissions } = req.body || {};
+    const cleanName = String(fullName || '').trim();
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const allowedExamRoles = ['none', 'admin', 'principal', 'exam_coordinator', 'teacher'];
 
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       return res.status(400).json({ message: 'Invalid User ID।' });
     }
-
-    if (!String(fullName || '').trim() ||
-        !String(email || '').trim().includes('@')) {
+    if (!cleanName || !/^\S+@\S+\.\S+$/.test(cleanEmail)) {
       return res.status(400).json({ message: 'Name र valid Email आवश्यक छ।' });
     }
-
-    if (!USER_ROLES.includes(role) || !validUserPermissions(permissions)) {
-      return res.status(400).json({ message: 'Invalid Role वा Permissions।' });
+    if (!USER_ROLES.includes(role) || !allowedExamRoles.includes(examRole) || !validUserPermissions(permissions)) {
+      return res.status(400).json({ message: 'Invalid Role, Examination Role वा Permissions।' });
     }
-
     if (userId === Number(req.authUser.id) && role !== 'admin') {
-      return res.status(400).json({
-        message: 'आफ्नो Admin Role परिवर्तन गर्न मिल्दैन।'
-      });
+      return res.status(400).json({ message: 'आफ्नो Admin Role परिवर्तन गर्न मिल्दैन।' });
     }
 
-    const result = await pool.query(
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const result = await client.query(
       `UPDATE app_users
        SET full_name = $1, email = $2, role = $3,
            permissions = $4, updated_at = NOW()
        WHERE id = $5 AND organization_id = $6
        RETURNING id, full_name, email, role, permissions, is_active`,
-      [
-        String(fullName).trim(),
-        String(email).trim().toLowerCase(),
-        role,
-        permissions,
-        userId,
-        req.authUser.organization_id
-      ]
+      [cleanName, cleanEmail, role, permissions, userId, req.authUser.organization_id]
     );
-
     if (!result.rowCount) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: 'User भेटिएन।' });
     }
 
-    res.json({ message: 'User Update भयो।', user: result.rows[0] });
-
-  } catch (error) {
-    if (error.code === '23505') {
-      return res.status(409).json({ message: 'यो Email पहिले नै प्रयोग भएको छ।' });
+    if (examRole === 'none') {
+      await client.query(
+        `UPDATE public.exam_role_assignments SET is_active = FALSE
+         WHERE organization_id = $1 AND LOWER(user_email) = $2`,
+        [req.authUser.organization_id, cleanEmail]
+      );
+    } else {
+      await client.query(
+        `INSERT INTO public.exam_role_assignments
+           (organization_id, user_email, role, is_active, assigned_by_email)
+         VALUES ($1, $2, $3, TRUE, $4)
+         ON CONFLICT (organization_id, user_email)
+         DO UPDATE SET role = EXCLUDED.role, is_active = TRUE,
+                       assigned_by_email = EXCLUDED.assigned_by_email`,
+        [req.authUser.organization_id, cleanEmail, examRole, req.authUser.email]
+      );
     }
+    await client.query('COMMIT');
+    res.json({ message: 'User Update भयो।', user: { ...result.rows[0], exam_role: examRole } });
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (error.code === '23505') return res.status(409).json({ message: 'यो Email पहिले नै प्रयोग भएको छ।' });
+    if (error.code === '42P01') return res.status(500).json({ message: 'Examination role table छैन। पहिले database/examination_module_migration.sql चलाउनुहोस्।' });
     console.error('Update user error:', error.message);
     res.status(500).json({ message: 'User Update गर्न समस्या आयो।' });
+  } finally {
+    client?.release();
   }
 });
-
 
 // 2. Activate / Deactivate User
 app.patch('/api/admin/users/:id/status', requireAuth, requireAdmin, async (req, res) => {
