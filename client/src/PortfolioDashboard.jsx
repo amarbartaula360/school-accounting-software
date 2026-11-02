@@ -158,14 +158,6 @@ export default function PortfolioDashboard({ onOpenSchool }) {
             </div>
             <div className="amar-visual" aria-label="Amar Bartaula portfolio monogram">
               <div className="amar-orbit">
-                <div className="amar-flag-wrap" aria-label="Animated Nepal flag">
-                  <svg className="amar-flag" viewBox="0 0 100 120" role="img" aria-label="Nepal flag">
-                    <path d="M8 5 L82 42 L8 42 Z M8 42 L82 82 L8 82 Z" fill="#dc143c" stroke="#fff" strokeWidth="4" strokeLinejoin="miter"/>
-                    <path d="M8 5 L82 42 L8 42 Z M8 42 L82 82 L8 82 Z" fill="none" stroke="#003893" strokeWidth="2.5" strokeLinejoin="miter"/>
-                    <path d="M28 17a11 11 0 1 0 18 11 13 13 0 1 1-18-11Z" fill="#fff"/>
-                    <path d="M30 55l2.5 5.5 6-.5-4.5 4 1.5 6-5.5-3-5.5 3 1.5-6-4.5-4 6 .5Z" fill="#fff"/>
-                  </svg>
-                </div>
                 <img className="amar-profile-photo" src={profilePhoto} alt="Amar Bartaula" />
               </div>
               <div className="amar-float one"><Code2 size={14} style={{display:'inline',verticalAlign:'middle',marginRight:6}}/> Software Projects</div>
