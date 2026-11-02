@@ -51,8 +51,15 @@ export default function PortfolioDashboard({ onOpenSchool }) {
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;500;600;700;800&display=swap');
         .amar-portfolio{min-height:100vh;background:#080b14;color:#edf2ff;font-family:'DM Sans','Noto Sans Devanagari',sans-serif;overflow:hidden}
         .amar-portfolio *{box-sizing:border-box}.amar-wrap{width:min(1160px,calc(100% - 44px));margin:auto}
-        .amar-nav{height:76px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #20283b}
-        .amar-brand{font:800 20px Manrope,sans-serif;letter-spacing:-.8px;color:#fff}.amar-brand span{color:#65d6ff}
+        .amar-nav{min-height:92px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid #20283b;padding:9px 0}
+        .amar-brand{font:800 20px Manrope,sans-serif;letter-spacing:-.8px;color:#fff;flex-shrink:0}.amar-brand span{color:#65d6ff}
+        .amar-nav-right{display:flex;align-items:center;gap:16px}
+        .amar-nav-clock{display:flex;align-items:center;gap:9px;padding:5px 10px;border:1px solid #2a3d59;border-radius:12px;background:#101a2a}
+        .amar-nav-flag{width:34px;height:44px;display:block;filter:drop-shadow(0 3px 5px #0007);animation:amar-flag-wave 3s ease-in-out infinite;transform-origin:top center}
+        .amar-nav-date{display:flex;flex-direction:column;gap:2px;white-space:nowrap}
+        .amar-nav-time{font:700 12px Manrope,monospace;color:#fff;font-variant-numeric:tabular-nums}
+        .amar-nav-bs{font:600 10px 'Noto Sans Devanagari',sans-serif;color:#8ddfff}
+        .amar-nav-ad{font-size:9px;color:#9aaac1}
         .amar-links{display:flex;gap:28px;align-items:center}.amar-links a{color:#aab6cc;text-decoration:none;font-size:13px}.amar-links a:hover{color:#fff}
         .amar-btn{border:1px solid #35425d;border-radius:10px;padding:11px 16px;background:#131c2e;color:#eaf4ff;font-weight:700;font-size:13px;cursor:pointer;display:inline-flex;gap:8px;align-items:center;text-decoration:none}
         .amar-btn.primary{background:linear-gradient(110deg,#2469a8,#6252b9);border:0;color:#fff;box-shadow:0 10px 30px #315eb633}
@@ -102,6 +109,7 @@ export default function PortfolioDashboard({ onOpenSchool }) {
         .amar-contact h2{margin:0 0 7px;font-size:25px}.amar-contact p{margin:0;color:#afbdd1;font-size:13px}
         .amar-footer{border-top:1px solid #1e293b;padding:25px 0;color:#7889a5;font-size:12px;display:flex;justify-content:space-between;gap:12px}
         @media(max-width:800px){.amar-hero{grid-template-columns:1fr;padding:65px 0;gap:20px}.amar-visual{min-height:290px}.amar-about-grid,.amar-project-grid{grid-template-columns:1fr 1fr}.amar-links{display:none}.amar-contact{align-items:flex-start;flex-direction:column}}
+        @media(max-width:560px){.amar-nav{gap:8px}.amar-nav-right{gap:7px}.amar-nav-clock{gap:5px;padding:4px 6px}.amar-nav-flag{width:26px;height:36px}.amar-nav-time{font-size:10px}.amar-nav-bs{font-size:9px}.amar-nav-ad{font-size:8px}.amar-nav-right>.amar-btn{padding:9px 10px;font-size:11px}}
         @media(max-width:560px){.amar-wrap{width:min(100% - 30px,1160px)}.amar-about-grid,.amar-project-grid{grid-template-columns:1fr}.amar-hero h1{letter-spacing:-2px}.amar-section{padding:55px 0}.amar-footer{flex-direction:column}}
       `}</style>
       <div className="amar-wrap">
@@ -110,7 +118,22 @@ export default function PortfolioDashboard({ onOpenSchool }) {
           <nav className="amar-links">
             <a href="#home">Home</a><a href="#about">About & Skills</a><a href="#projects">Projects</a><a href="#contact">Contact</a>
           </nav>
-          <a className="amar-btn" href="#contact">Get in touch <ArrowUpRight size={15}/></a>
+          <div className="amar-nav-right">
+            <div className="amar-nav-clock" aria-label="Nepal date and time">
+              <svg className="amar-nav-flag" viewBox="0 0 100 120" role="img" aria-label="Nepal flag">
+                <path d="M5 3 L91 53 L31 53 L91 112 L5 112 Z" fill="#003893" stroke="#003893" strokeWidth="2" strokeLinejoin="round"/>
+                <path d="M9 10 L78 50 L28 50 L83 105 L9 105 Z" fill="#dc143c" stroke="#fff" strokeWidth="2" strokeLinejoin="round"/>
+                <path d="M18 35 C27 52 46 53 55 38 C50 58 24 60 18 35Z" fill="#fff"/>
+                <path d="M35 65 L39 75 L50 72 L44 81 L50 90 L39 87 L35 98 L31 87 L20 90 L26 81 L20 72 L31 75Z" fill="#fff"/>
+              </svg>
+              <div className="amar-nav-date">
+                <span className="amar-nav-time">{nepalTime} NPT</span>
+                <span className="amar-nav-bs">नेपाली मिति: हाम्रै पात्रो</span>
+                <span className="amar-nav-ad">{nepalDate}</span>
+              </div>
+            </div>
+            <a className="amar-btn" href="#contact">Get in touch <ArrowUpRight size={15}/></a>
+          </div>
         </header>
         <main>
           <section className="amar-hero" id="home">
