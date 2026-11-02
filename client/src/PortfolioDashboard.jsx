@@ -39,6 +39,15 @@ export default function PortfolioDashboard({ onOpenSchool }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [nepalNow, setNepalNow] = useState(() => new Date());
   useEffect(() => { const timer = setInterval(() => setNepalNow(new Date()), 1000); return () => clearInterval(timer); }, []);
+  useEffect(() => {
+    window._mypatroDateFormat = 2;
+    window._mypatroResponseType = 'html';
+    const script = document.createElement('script');
+    script.src = 'https://mypatro.com/resources/nepali_date/nepali_date.js';
+    script.async = true;
+    document.head.appendChild(script);
+    return () => { script.remove(); };
+  }, []);
   const nepalDate = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kathmandu', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(nepalNow);
   const nepalTime = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kathmandu', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).format(nepalNow);
   const [activeFilter, setActiveFilter] = useState('All');
@@ -128,7 +137,7 @@ export default function PortfolioDashboard({ onOpenSchool }) {
               </svg>
               <div className="amar-nav-date">
                 <span className="amar-nav-time">{nepalTime} NPT</span>
-                <span className="amar-nav-bs">नेपाली मिति: हाम्रै पात्रो</span>
+                <span className="amar-nav-bs" id="mypatro_nepali_date">नेपाली मिति लोड हुँदैछ…</span>
                 <span className="amar-nav-ad">{nepalDate}</span>
               </div>
             </div>
