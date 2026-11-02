@@ -155,7 +155,6 @@ export default function PortfolioDashboard({ onOpenSchool }) {
                 <a className="amar-btn primary" href="#projects">Explore Projects <ArrowUpRight size={16}/></a>
                 <a className="amar-btn" href="#contact"><Mail size={15}/> Contact</a>
               </div>
-              <div className="amar-clock" aria-live="off"><span className="amar-clock-label">Nepal Standard Time · NPT</span><span className="amar-clock-time">{nepalTime}</span><span className="amar-clock-date">{nepalDate}</span></div>
             </div>
             <div className="amar-visual" aria-label="Amar Bartaula portfolio monogram">
               <div className="amar-orbit">
