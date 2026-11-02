@@ -24,7 +24,7 @@ const projects = [
     description: 'United English Boarding School का विद्यार्थी शुल्क, बाँकी रकम, अभिभावक सम्पर्क तथा SMS/voice reminder workflow व्यवस्थापनका लागि बनाइएको prototype।',
     status: 'Prototype',
     icon: PhoneCall,
-    href: 'https://uebs-fee-reminder.onrender.com'
+    href: 'https://fee.amarbartaula.com.np'
   },
   {
     title: 'Web Applications',
