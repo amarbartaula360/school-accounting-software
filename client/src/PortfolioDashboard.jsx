@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import profilePhoto from '../assets/profile.jpg';
 import { ArrowUpRight, Code2, Database, GraduationCap, Mail, Menu, Monitor, PhoneCall, Sparkles } from 'lucide-react';
 
@@ -37,6 +37,10 @@ const projects = [
 
 export default function PortfolioDashboard({ onOpenSchool }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [nepalNow, setNepalNow] = useState(() => new Date());
+  useEffect(() => { const timer = setInterval(() => setNepalNow(new Date()), 1000); return () => clearInterval(timer); }, []);
+  const nepalDate = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kathmandu', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(nepalNow);
+  const nepalTime = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kathmandu', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).format(nepalNow);
   const [activeFilter, setActiveFilter] = useState('All');
   const filters = ['All', 'Currently Working', 'Accounting', 'School Systems', 'Development'];
   const visibleProjects = projects.filter(project => activeFilter === 'All' || project.category === activeFilter);
@@ -59,7 +63,18 @@ export default function PortfolioDashboard({ onOpenSchool }) {
         @keyframes amar-intro{from{opacity:0;transform:translateY(24px);filter:blur(5px)}to{opacity:1;transform:translateY(0);filter:blur(0)}}
         @keyframes amar-name-rise{from{opacity:0;transform:translateY(15px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes amar-name-glow{0%,100%{background-position:0% center}50%{background-position:100% center}}
-        @media(prefers-reduced-motion:reduce){.amar-hero h1,.amar-hero h1 span{animation:none}}
+        .amar-hero h1{animation:amar-intro .9s cubic-bezier(.2,.8,.2,1) both,amar-heading-float 5s ease-in-out 1s infinite}
+        @keyframes amar-heading-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+        .amar-orbit{animation:amar-orbit-breathe 5s ease-in-out infinite}
+        @keyframes amar-orbit-breathe{0%,100%{box-shadow:0 0 90px #3463a326,inset 0 0 55px #263d622b}50%{box-shadow:0 0 115px #3463a34d,inset 0 0 75px #263d6244}}
+        .amar-flag-wrap{position:absolute;z-index:3;top:-8px;left:50%;transform:translateX(-50%);width:88px;height:104px;filter:drop-shadow(0 8px 12px #0008);transform-origin:top center;animation:amar-flag-wave 2.8s ease-in-out infinite}
+        .amar-flag{width:100%;height:100%;overflow:visible}
+        @keyframes amar-flag-wave{0%,100%{rotate:-3deg}50%{rotate:4deg}}
+        .amar-clock{display:inline-flex;flex-direction:column;gap:4px;margin-top:24px;padding:12px 16px;border:1px solid #294361;border-radius:13px;background:linear-gradient(120deg,#101d30dd,#18223add);box-shadow:0 8px 28px #0003}
+        .amar-clock-label{font-size:10px;letter-spacing:1.5px;color:#78d7ff;font-weight:800;text-transform:uppercase}
+        .amar-clock-time{font:800 20px Manrope,monospace;letter-spacing:1px;color:#fff;font-variant-numeric:tabular-nums}
+        .amar-clock-date{font-size:12px;color:#aab8ce}
+        @media(prefers-reduced-motion:reduce){.amar-hero h1,.amar-hero h1 span,.amar-orbit,.amar-flag-wrap{animation:none}}
         .amar-nepali{font-size:20px;color:#a8b7d0;font-weight:600;margin:0 0 20px}
         .amar-lead{max-width:620px;color:#aab6cc;font-size:16px;line-height:1.9;margin:0 0 28px}
         .amar-actions{display:flex;gap:12px;flex-wrap:wrap}
@@ -108,9 +123,20 @@ export default function PortfolioDashboard({ onOpenSchool }) {
                 <a className="amar-btn primary" href="#projects">Explore Projects <ArrowUpRight size={16}/></a>
                 <a className="amar-btn" href="#contact"><Mail size={15}/> Contact</a>
               </div>
+              <div className="amar-clock" aria-live="off"><span className="amar-clock-label">Nepal Standard Time · NPT</span><span className="amar-clock-time">{nepalTime}</span><span className="amar-clock-date">{nepalDate}</span></div>
             </div>
             <div className="amar-visual" aria-label="Amar Bartaula portfolio monogram">
-              <div className="amar-orbit"><img className="amar-profile-photo" src={profilePhoto} alt="Amar Bartaula" /></div>
+              <div className="amar-orbit">
+                <div className="amar-flag-wrap" aria-label="Animated Nepal flag">
+                  <svg className="amar-flag" viewBox="0 0 100 120" role="img" aria-label="Nepal flag">
+                    <path d="M8 5 L82 42 L8 42 Z M8 42 L82 82 L8 82 Z" fill="#dc143c" stroke="#fff" strokeWidth="4" strokeLinejoin="miter"/>
+                    <path d="M8 5 L82 42 L8 42 Z M8 42 L82 82 L8 82 Z" fill="none" stroke="#003893" strokeWidth="2.5" strokeLinejoin="miter"/>
+                    <path d="M28 17a11 11 0 1 0 18 11 13 13 0 1 1-18-11Z" fill="#fff"/>
+                    <path d="M30 55l2.5 5.5 6-.5-4.5 4 1.5 6-5.5-3-5.5 3 1.5-6-4.5-4 6 .5Z" fill="#fff"/>
+                  </svg>
+                </div>
+                <img className="amar-profile-photo" src={profilePhoto} alt="Amar Bartaula" />
+              </div>
               <div className="amar-float one"><Code2 size={14} style={{display:'inline',verticalAlign:'middle',marginRight:6}}/> Software Projects</div>
               <div className="amar-float two"><Database size={14} style={{display:'inline',verticalAlign:'middle',marginRight:6}}/> Digital Systems</div>
             </div>
