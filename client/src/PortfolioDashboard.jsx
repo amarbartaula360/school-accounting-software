@@ -54,8 +54,12 @@ export default function PortfolioDashboard({ onOpenSchool }) {
         .amar-btn.primary{background:linear-gradient(110deg,#2469a8,#6252b9);border:0;color:#fff;box-shadow:0 10px 30px #315eb633}
         .amar-hero{display:grid;grid-template-columns:1.2fr .8fr;gap:50px;align-items:center;padding:95px 0 85px;min-height:560px}
         .amar-kicker{display:inline-flex;gap:8px;align-items:center;color:#7cdbff;background:#11283a;border:1px solid #214765;border-radius:30px;padding:8px 13px;font-size:12px;font-weight:700}
-        .amar-hero h1{font:800 clamp(42px,6vw,70px)/1.06 Manrope,sans-serif;letter-spacing:-3px;margin:22px 0 8px;color:#fff}
-        .amar-hero h1 span{background:linear-gradient(100deg,#6dd5ff,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent}
+        .amar-hero h1{font:800 clamp(42px,6vw,70px)/1.06 Manrope,sans-serif;letter-spacing:-3px;margin:22px 0 8px;color:#fff;animation:amar-intro .9s cubic-bezier(.2,.8,.2,1) both}
+        .amar-hero h1 span{display:inline-block;background:linear-gradient(100deg,#6dd5ff,#a78bfa,#6dd5ff);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:amar-name-glow 4s ease-in-out 1s infinite,amar-name-rise .9s .18s cubic-bezier(.2,.8,.2,1) both}
+        @keyframes amar-intro{from{opacity:0;transform:translateY(24px);filter:blur(5px)}to{opacity:1;transform:translateY(0);filter:blur(0)}}
+        @keyframes amar-name-rise{from{opacity:0;transform:translateY(15px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+        @keyframes amar-name-glow{0%,100%{background-position:0% center}50%{background-position:100% center}}
+        @media(prefers-reduced-motion:reduce){.amar-hero h1,.amar-hero h1 span{animation:none}}
         .amar-nepali{font-size:20px;color:#a8b7d0;font-weight:600;margin:0 0 20px}
         .amar-lead{max-width:620px;color:#aab6cc;font-size:16px;line-height:1.9;margin:0 0 28px}
         .amar-actions{display:flex;gap:12px;flex-wrap:wrap}
