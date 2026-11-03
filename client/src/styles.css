@@ -133,3 +133,37 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+/* UEBS-inspired clean accounting UI refresh */
+:root {
+  color:#1f2937;
+  background:#f7f8fa;
+  font-family:'DM Sans',sans-serif;
+}
+body { background:#f7f8fa; }
+.sidebar { background:#111827; }
+.brand-mark { background:#334155; }
+.nav-link.active { background:#334155; box-shadow:none; }
+.nav-link:hover { background:#1f2937; }
+.primary-button { background:#1f2937; box-shadow:none; border-radius:10px; }
+.primary-button:hover { background:#0f172a; }
+.metric-card,.panel { border-radius:16px; border-color:#e5e7eb; box-shadow:0 2px 8px rgba(15,23,42,.035); }
+.metric-icon.blue { background:#eef2f7;color:#334155; }
+.metric-icon.orange { background:#fff7ed;color:#c2410c; }
+.metric-icon.green { background:#ecfdf5;color:#047857; }
+.metric-icon.purple { background:#f5f3ff;color:#6d28d9; }
+.page-heading h1,.module-placeholder h1 { color:#111827; }
+.panel-heading h2 { color:#1f2937; }
+.content-area { max-width:1700px; }
+.subtle-button,.filter-row select { border-radius:9px; }
+.notice { background:#f1f5f9;color:#475569; }
+.notice strong { color:#1e293b; }
+@media(max-width:720px) {
+  .metrics-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .main-grid { grid-template-columns:minmax(0,1fr); }
+  .metric-card { min-width:0; }
+  .metric-value { white-space:normal; overflow-wrap:anywhere; }
+  .panel,.metric-card { border-radius:14px; }
+  .page-heading { flex-wrap:wrap; }
+}
