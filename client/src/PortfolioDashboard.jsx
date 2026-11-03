@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import profilePhoto from '../assets/profile.jpg';
 import {
   ArrowUpRight, Code2, Database, GraduationCap, Mail, Menu, Monitor,
-  PhoneCall, Sparkles, Github, Facebook, X, Globe2, Layers3
+  PhoneCall, Sparkles, X, Globe2
 } from 'lucide-react';
 
 const projects = [
@@ -245,8 +245,8 @@ export default function PortfolioDashboard({ onOpenSchool }) {
                 <div className="amar-contact-links">
                   <a href="tel:+9779845433722"><PhoneCall size={15}/> +977 9845433722</a>
                   <a href="mailto:amarbartaula360@gmail.com"><Mail size={15}/> Email</a>
-                  <a href="https://www.facebook.com/lbartaula" target="_blank" rel="noreferrer"><Facebook size={15}/> Facebook</a>
-                  <a href="https://github.com/amarbartaula360" target="_blank" rel="noreferrer"><Github size={15}/> GitHub</a>
+                  <a href="https://www.facebook.com/lbartaula" target="_blank" rel="noreferrer"><Globe2 size={15}/> Facebook</a>
+                  <a href="https://github.com/amarbartaula360" target="_blank" rel="noreferrer"><Code2 size={15}/> GitHub</a>
                 </div>
               </div>
               <a className="amar-btn" href="mailto:amarbartaula360@gmail.com">Let’s connect <ArrowUpRight size={16}/></a>
