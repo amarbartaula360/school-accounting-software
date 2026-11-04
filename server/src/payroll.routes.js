@@ -1,4 +1,5 @@
 import express from 'express';
+import net from 'node:net';
 
 export function registerPayrollRoutes(app, pool, requireAuth) {
   const router = express.Router();
@@ -203,6 +204,19 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   router.get('/device',async(req,res)=>{
     try{const r=await pool.query('SELECT device_name,device_ip,device_port,device_type,last_sync_at FROM payroll_device_settings WHERE organization_id=$1',[orgId(req)]);res.json(r.rows[0]||{});}
     catch(e){res.status(500).json({message:'Device settings load भएन।'});}
+  });
+  router.post('/device/test-connection',async(req,res)=>{
+    const ip=String(req.body?.ip||'').trim();
+    const port=Number(req.body?.port||4370);
+    const validIp=/^(?:(?:25[0-5]|2[0-4]\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)$/.test(ip);
+    if(!validIp||!Number.isInteger(port)||port<1||port>65535)return res.status(400).json({ok:false,message:'IP Address वा TCP Port सही राख्नुहोस्।'});
+    const socket=new net.Socket();let settled=false;
+    const finish=(status,payload)=>{if(settled)return;settled=true;socket.destroy();res.status(status).json(payload);};
+    socket.setTimeout(3500);
+    socket.once('connect',()=>finish(200,{ok:true,message:`TCP Connection सफल भयो: ${ip}:${port}`}));
+    socket.once('timeout',()=>finish(504,{ok:false,message:'Connection timeout भयो। IP, Port, LAN र Firewall जाँच गर्नुहोस्। Render Cloud बाट Private LAN IP पहुँच नहुन सक्छ; LAN Sync Agent बाट परीक्षण गर्नुहोस्।'}));
+    socket.once('error',()=>finish(502,{ok:false,message:'Connection हुन सकेन। IP/Port, मेसिनको Network र Firewall जाँच गर्नुहोस्। Render Cloud बाट Private LAN IP सिधै पहुँच हुँदैन।'}));
+    socket.connect(port,ip);
   });
   router.put('/device',async(req,res)=>{
     const b=req.body||{};try{const r=await pool.query(`INSERT INTO payroll_device_settings(organization_id,device_name,device_ip,device_port,device_type,updated_at) VALUES($1,$2,$3,$4,$5,NOW()) ON CONFLICT(organization_id) DO UPDATE SET device_name=EXCLUDED.device_name,device_ip=EXCLUDED.device_ip,device_port=EXCLUDED.device_port,device_type=EXCLUDED.device_type,updated_at=NOW() RETURNING device_name,device_ip,device_port,device_type,last_sync_at`,[orgId(req),b.deviceName||null,b.ip||null,Number(b.port||4370),b.deviceType||null]);res.json(r.rows[0]);}
