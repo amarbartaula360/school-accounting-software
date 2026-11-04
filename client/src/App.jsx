@@ -1498,6 +1498,19 @@ function FinancialReports({ accounts }) {
   const ledgerAccounts = accounts.filter(a => !a.isGroup && a.isActive !== false);
   const income = ledgerAccounts.filter(a => /income/i.test(a.type));
   const expenses = ledgerAccounts.filter(a => /expense/i.test(a.type));
+  const accountGroupsById = new Map(
+    accounts.filter(a => a.isGroup).map(group => [Number(group.id), group])
+  );
+  const parentGroupName = account =>
+    account.parentName || accountGroupsById.get(Number(account.parentId))?.name || '';
+  const cashLedgers = ledgerAccounts.filter(account =>
+    /cash|नगद/i.test(parentGroupName(account))
+  );
+  const bankLedgers = ledgerAccounts.filter(account =>
+    /bank|बैंक/i.test(parentGroupName(account))
+  );
+  const totalCash = cashLedgers.reduce((sum, account) => sum + Number(account.balance || 0), 0);
+  const totalBank = bankLedgers.reduce((sum, account) => sum + Number(account.balance || 0), 0);
 
   const totalIncome = income.reduce(
     (sum, a) => sum + Number(a.balance || 0), 0
@@ -1609,7 +1622,8 @@ function FinancialReports({ accounts }) {
         {[
           ['trial', 'Trial Balance'],
           ['income', 'Income & Expenditure'],
-          ['ledger', 'Account Ledger']
+          ['ledger', 'Account Ledger'],
+          ['cashbank', 'Cash & Bank Summary']
         ].map(([key, label]) => (
           <button
             key={key}
@@ -1630,7 +1644,9 @@ function FinancialReports({ accounts }) {
             ? 'Trial Balance / परीक्षण सन्तुलन'
             : report === 'income'
               ? 'Income & Expenditure / आम्दानी तथा खर्च विवरण'
-              : 'Account Ledger / खाता बही विवरण'}
+              : report === 'ledger'
+                ? 'Account Ledger / खाता बही विवरण'
+                : 'Cash & Bank Summary / नगद तथा बैंक सारांश'}
         </h2>
 
         {report === 'trial' && (
@@ -1743,6 +1759,47 @@ function FinancialReports({ accounts }) {
 
             <h3 style={{ fontSize: '15px', color: '#1e293b', margin: '24px 0 10px' }}>खर्च खाताहरू (Expense Accounts)</h3>
             <ReportAccountTable accounts={expenses} />
+          </>
+        )}
+
+        {report === 'cashbank' && (
+          <>
+            <p style={{ color: '#64748b', fontSize: '13px', marginBottom: '16px' }}>
+              Chart of Accounts का Cash र Bank group अन्तर्गतका सक्रिय Ledger balance अनुसार Financial Reports सारांश।
+            </p>
+            <div style={styles.metricsGrid}>
+              <Metric title="Total Cash / कुल नगद" value={money(totalCash)} note={cashLedgers.length + ' cash ledgers'} icon={<Wallet size={20}/>} color="#059669" bg="#ecfdf5"/>
+              <Metric title="Total Bank / कुल बैंक" value={money(totalBank)} note={bankLedgers.length + ' bank ledgers'} icon={<Landmark size={20}/>} color="#2563eb" bg="#dbeafe"/>
+              <Metric title="Cash + Bank / जम्मा" value={money(totalCash + totalBank)} note="कुल नगद + कुल बैंक" icon={<CreditCard size={20}/>} color="#7c3aed" bg="#ede9fe"/>
+            </div>
+            {[
+              ['Cash Ledgers / नगद खाताहरू', cashLedgers, totalCash],
+              ['Bank Ledgers / बैंक खाताहरू', bankLedgers, totalBank]
+            ].map(([title, rows, total]) => (
+              <div key={title} style={{ marginTop: 22 }}>
+                <div style={{ ...styles.panelHeading, marginBottom: 10 }}>
+                  <h3 style={styles.panelTitle}>{title}</h3>
+                  <strong>{money(total)}</strong>
+                </div>
+                <div style={styles.tableWrap}>
+                  <table style={styles.table}>
+                    <thead><tr><th>Code</th><th>Ledger Name</th><th>Under Group</th><th style={{ textAlign: 'right' }}>Balance</th></tr></thead>
+                    <tbody>
+                      {rows.map(account => (
+                        <tr key={account.id}>
+                          <td>{account.code || '—'}</td>
+                          <td><strong>{account.name}</strong></td>
+                          <td>{parentGroupName(account) || '—'}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(account.balance)}</td>
+                        </tr>
+                      ))}
+                      {!rows.length && <tr><td colSpan="4" style={styles.emptyCell}>यस समूहअन्तर्गत सक्रिय Ledger भेटिएन।</td></tr>}
+                    </tbody>
+                    <tfoot><tr><th colSpan="3" style={{ textAlign: 'right' }}>Total / जम्मा</th><th style={{ textAlign: 'right' }}>{money(total)}</th></tr></tfoot>
+                  </table>
+                </div>
+              </div>
+            ))}
           </>
         )}
 
