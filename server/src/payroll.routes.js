@@ -152,6 +152,48 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
     }catch(e){await client.query('ROLLBACK');console.error('Payroll generation:',e);res.status(500).json({message:'Payroll generate गर्न सकिएन।'});}
     finally{client.release();}
   });
+  // Detailed employee payroll register with bank-transfer details.
+  router.get('/runs/:id/items',async(req,res)=>{
+    try{
+      const r=await pool.query(`SELECT pi.*,s.employee_code,s.full_name,s.designation,s.bank_name,s.bank_account_name,s.bank_account_number
+        FROM payroll_items pi JOIN payroll_staff s ON s.id=pi.staff_id
+        JOIN payroll_runs pr ON pr.id=pi.payroll_run_id
+        WHERE pi.organization_id=$1 AND pi.payroll_run_id=$2 ORDER BY s.full_name`,[orgId(req),req.params.id]);
+      res.json(r.rows);
+    }catch(e){res.status(500).json({message:'कर्मचारी तलब विवरण load भएन।'});}
+  });
+  // Record a bank transfer only after the operator confirms it was deposited.
+  router.put('/items/:id/bank-transfer',async(req,res)=>{
+    const b=req.body||{};
+    const amount=money(b.paidAmount);
+    if(!b.paymentReference||amount<0)return res.status(400).json({message:'बैंक भौचर/Reference र सही रकम आवश्यक छ।'});
+    try{
+      const r=await pool.query(`UPDATE payroll_items SET paid_amount=$3,payment_method='bank_transfer',
+        payment_reference=$4,paid_at=CASE WHEN $3>0 THEN COALESCE($5::timestamptz,NOW()) ELSE NULL END
+        WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),req.params.id,amount,String(b.paymentReference).trim(),b.paidAt||null]);
+      if(!r.rowCount)return res.status(404).json({message:'Payroll item भेटिएन।'});
+      res.json(r.rows[0]);
+    }catch(e){res.status(500).json({message:'Bank transfer विवरण सुरक्षित भएन।'});}
+  });
+  // Add a clearly labelled set of 50 demo employees once per organization.
+  router.post('/demo-staff',async(req,res)=>{
+    const names=['आर्यन अधिकारी','स्मृति श्रेष्ठ','प्रकाश थापा','अनिता गुरुङ','सन्देश लामिछाने','पूजा कार्की','विवेक पौडेल','रचना तामाङ','सुशील भण्डारी','निशा मगर','रोशन खड्का','कविता शर्मा','दीपक बस्नेत','सरिता राई','सागर न्यौपाने','ममता चौधरी','अमित पोखरेल','सीता परियार','बिनोद दाहाल','अस्मिता महतो','राजेश घिमिरे','रीता काफ्ले','नवीन बर्तौला','सविना मोक्तान','कमल सुवेदी','प्रमिला तिमिल्सिना','मनोज उप्रेती','संगीता वाइबा','विकास श्रेष्ठ','एलिना अधिकारी','सन्तोष राना','मेनुका खनाल','अर्जुन सापकोटा','दीपा तामाङ','निरज लामिछाने','सुष्मा पौडेल','रमेश विश्वकर्मा','आशा गुरुङ','कृष्ण न्यौपाने','मिना थापा','अभिषेक कार्की','बिना राई','प्रदीप भुजेल','सिर्जना मगर','उज्ज्वल खड्का','लक्ष्मी चौधरी','समीर दाहाल','रोशनी पोखरेल','हरि घिमिरे','सविता श्रेष्ठ'];
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');const id=orgId(req);let inserted=0;
+      for(let i=0;i<names.length;i++){
+        const code='DEMO-'+String(i+1).padStart(3,'0');
+        const r=await client.query(`INSERT INTO payroll_staff(organization_id,employee_code,full_name,designation,department,employment_type,basic_salary,allowances,bank_name,bank_account_name,bank_account_number,is_demo)
+          VALUES($1,$2,$3,$4,$5,'permanent',$6,$7,'Demo Bank',$3,$8,TRUE)
+          ON CONFLICT(organization_id,employee_code) DO NOTHING RETURNING id`,
+          [id,code,names[i],['शिक्षक','लेखा सहायक','प्रशासन सहायक','कार्यालय सहयोगी','समन्वयक'][i%5],['शिक्षण','प्रशासन','लेखा','सहायक','समन्वय'][i%5],25000+(i%8)*2500,1500+(i%4)*500,'DEMO-AC-'+String(i+1).padStart(6,'0')]);
+        inserted+=r.rowCount;
+      }
+      await client.query('COMMIT');res.json({ok:true,inserted,message:inserted+' demo staff थपिए।'});
+    }catch(e){await client.query('ROLLBACK');console.error('Demo staff:',e);res.status(500).json({message:'Demo staff थप्न सकिएन। Migration चलेको छ कि जाँच्नुहोस्।'});}
+    finally{client.release();}
+  });
+
   router.get('/reports',async(req,res)=>{
     try{const id=orgId(req);const r=await pool.query(`SELECT pr.id,pr.period_bs,pr.period_start,pr.period_end,pr.total_basic,pr.total_allowances,pr.total_overtime,pr.total_deductions,pr.total_advance,pr.total_net,COUNT(pi.id)::int AS staff_count,COALESCE(SUM(pi.paid_amount),0) AS paid_amount FROM payroll_runs pr LEFT JOIN payroll_items pi ON pi.payroll_run_id=pr.id WHERE pr.organization_id=$1 GROUP BY pr.id ORDER BY pr.period_start DESC`,[id]);res.json(r.rows);}
     catch(e){res.status(500).json({message:'Payroll report load भएन।'});}
