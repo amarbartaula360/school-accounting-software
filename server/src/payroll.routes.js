@@ -92,7 +92,7 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
     const b=req.body||{};
     const type=String(b.requestType||'');
     const start=String(b.startDate||'').slice(0,10),end=String(b.endDate||'').slice(0,10);
-    if(!b.staffId||!['leave','field_visit'].includes(type)||!/^\d{4}-\\d{2}-\\d{2}$/.test(start)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(end)||end<start||!String(b.reason||'').trim())
+    if(!b.staffId||!['leave','field_visit'].includes(type)||!/^\d{4}-\d{2}-\d{2}$/.test(start)||!/^\d{4}-\d{2}-\d{2}$/.test(end)||end<start||!String(b.reason||'').trim())
       return res.status(400).json({message:'कर्मचारी, अनुरोध प्रकार, सही मिति र कारण अनिवार्य छन्।'});
     if((Date.parse(end)-Date.parse(start))/86400000>90)return res.status(400).json({message:'एक पटकमा बढीमा ९० दिनको अनुरोध गर्न सकिन्छ।'});
     try{
@@ -269,7 +269,7 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   router.post('/device/test-connection',async(req,res)=>{
     const ip=String(req.body?.ip||'').trim();
     const port=Number(req.body?.port||4370);
-    const validIp=/^(?:(?:25[0-5]|2[0-4]\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)$/.test(ip);
+    const validIp=/^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/.test(ip);
     if(!validIp||!Number.isInteger(port)||port<1||port>65535)return res.status(400).json({ok:false,message:'IP Address वा TCP Port सही राख्नुहोस्।'});
     const socket=new net.Socket();let settled=false;
     const finish=(status,payload)=>{if(settled)return;settled=true;socket.destroy();res.status(status).json(payload);};
