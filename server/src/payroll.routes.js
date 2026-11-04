@@ -129,6 +129,48 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
     finally{client.release();}
   });
 
+  router.get('/holidays',async(req,res)=>{
+    try{const r=await pool.query('SELECT id,holiday_date,holiday_name FROM payroll_holidays WHERE organization_id=$1 ORDER BY holiday_date DESC',[orgId(req)]);res.json(r.rows);}
+    catch(e){console.error('Holiday list:',e);res.status(500).json({message:'सार्वजनिक बिदा सूची load भएन।'});}
+  });
+  router.post('/holidays',async(req,res)=>{
+    const date=String(req.body?.date||'').slice(0,10),name=String(req.body?.name||'').trim();
+    if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)||!name)return res.status(400).json({message:'सही मिति र बिदाको नाम अनिवार्य छ।'});
+    try{const r=await pool.query(`INSERT INTO payroll_holidays(organization_id,holiday_date,holiday_name) VALUES($1,$2,$3) ON CONFLICT(organization_id,holiday_date) DO UPDATE SET holiday_name=EXCLUDED.holiday_name RETURNING *`,[orgId(req),date,name]);res.status(201).json(r.rows[0]);}
+    catch(e){console.error('Create holiday:',e);res.status(500).json({message:'सार्वजनिक बिदा सुरक्षित भएन। Migration चलाइएको छ कि जाँच्नुहोस्।'});}
+  });
+  router.delete('/holidays/:id',async(req,res)=>{
+    try{const r=await pool.query('DELETE FROM payroll_holidays WHERE organization_id=$1 AND id=$2 RETURNING id',[orgId(req),req.params.id]);if(!r.rowCount)return res.status(404).json({message:'बिदा भेटिएन।'});res.json({ok:true});}
+    catch(e){res.status(500).json({message:'बिदा हटाउन सकिएन।'});}
+  });
+  router.get('/attendance/report',async(req,res)=>{
+    const from=String(req.query.from||'').slice(0,10),to=String(req.query.to||'').slice(0,10);
+    if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(from)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(to)||to<from)return res.status(400).json({message:'रिपोर्टको सही सुरु र अन्तिम मिति राख्नुहोस्।'});
+    try{
+      const r=await pool.query(`WITH days AS (
+        SELECT d::date AS work_date FROM generate_series($2::date,$3::date,interval '1 day') d
+      ), matrix AS (
+        SELECT s.id,s.employee_code,s.full_name,s.designation,d.work_date,
+          a.status,a.late_minutes,
+          EXISTS(SELECT 1 FROM payroll_holidays h WHERE h.organization_id=$1 AND h.holiday_date=d.work_date) AS is_holiday,
+          EXTRACT(DOW FROM d.work_date)=6 AS is_weekend
+        FROM payroll_staff s CROSS JOIN days d
+        LEFT JOIN payroll_attendance a ON a.organization_id=$1 AND a.staff_id=s.id AND a.attendance_date=d.work_date
+        WHERE s.organization_id=$1 AND s.is_active=true
+      )
+      SELECT id AS staff_id,employee_code,full_name,designation,
+        COUNT(*) FILTER(WHERE is_holiday)::int AS holiday_days,
+        COUNT(*) FILTER(WHERE is_weekend AND NOT is_holiday)::int AS weekend_days,
+        COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND status='present' AND COALESCE(late_minutes,0)=0)::int AS present_days,
+        COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND (status='late' OR COALESCE(late_minutes,0)>0))::int AS late_days,
+        COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND status='on_leave')::int AS leave_days,
+        COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND status='field_visit')::int AS field_visit_days,
+        COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND (status IS NULL OR status='absent'))::int AS absent_days
+      FROM matrix GROUP BY id,employee_code,full_name,designation ORDER BY full_name`,[orgId(req),from,to]);
+      res.json(r.rows);
+    }catch(e){console.error('Attendance report:',e);res.status(500).json({message:'हाजिरी रिपोर्ट तयार भएन।'});}
+  });
+
   router.get('/advances',async(req,res)=>{
     try{const r=await pool.query(`SELECT a.*,s.employee_code,s.full_name,(a.amount-a.recovered_amount) AS balance FROM payroll_advances a JOIN payroll_staff s ON s.id=a.staff_id WHERE a.organization_id=$1 ORDER BY a.advance_date DESC`,[orgId(req)]);res.json(r.rows);}
     catch(e){res.status(500).json({message:'Advance list load भएन।'});}
