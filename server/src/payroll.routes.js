@@ -165,7 +165,7 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
         COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND (status='late' OR COALESCE(late_minutes,0)>0))::int AS late_days,
         COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND status='on_leave')::int AS leave_days,
         COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND status='field_visit')::int AS field_visit_days,
-        COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND status IS NULL)::int AS absent_days
+        COUNT(*) FILTER(WHERE NOT is_holiday AND NOT is_weekend AND (status IS NULL OR status='absent'))::int AS absent_days
       FROM matrix GROUP BY id,employee_code,full_name,designation ORDER BY full_name`,[orgId(req),from,to]);
       res.json(r.rows);
     }catch(e){console.error('Attendance report:',e);res.status(500).json({message:'हाजिरी रिपोर्ट तयार भएन।'});}
