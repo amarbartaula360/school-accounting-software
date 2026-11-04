@@ -127,8 +127,8 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
         const adv=await client.query("SELECT id,LEAST(amount-recovered_amount,CASE WHEN installment_amount>0 THEN installment_amount ELSE amount-recovered_amount END) AS due FROM payroll_advances WHERE organization_id=$1 AND staff_id=$2 AND status='open' AND amount>recovered_amount AND (start_period_bs IS NULL OR start_period_bs<=$3) ORDER BY advance_date,id FOR UPDATE",[id,person.id,b.periodBS]);
         const advanceDeduction=adv.rows.reduce((n,x)=>n+money(x.due),0);
         let otherEarnings=0,otherDeductions=0,taxDeduction=0;const breakdown=[];
-        for(const h of heads){
-          const base=h.percentage_base==='gross'?grossBase:basic;
+        for(const h of [...heads].sort((a,b)=>(a.head_type==='earning'?0:1)-(b.head_type==='earning'?0:1))){
+          const base=h.percentage_base==='gross'?(grossBase+otherEarnings):basic;
           const amount=h.calculation_type==='percentage'?Math.round(base*money(h.amount)/100*100)/100:money(h.amount);
           breakdown.push({id:h.id,code:h.head_code,name:h.head_name,type:h.head_type,calculationType:h.calculation_type,rate:money(h.amount),amount});
           if(h.head_type==='earning')otherEarnings+=amount;
