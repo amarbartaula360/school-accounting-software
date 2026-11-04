@@ -4,6 +4,7 @@ import { apiFetch, AUTH_TOKEN_KEY } from './api.js';
 import NepaliDate from 'nepali-date-converter';
 import ExaminationModule from './ExaminationModule.jsx';
 import StudentIdCardModule from './StudentIdCardModule.jsx';
+import PayrollStaffModule from './PayrollStaffModule.jsx';
 import PortfolioDashboard from './PortfolioDashboard.jsx';
 import * as XLSX from 'xlsx';
 import {
@@ -3342,6 +3343,9 @@ async function handleVoucherSaved() {
             <FinancialReports accounts={accounts} />
           )}
 
+          {active === 'Payroll & Staff' && (
+            <PayrollStaffModule apiBaseUrl={API_BASE_URL} />
+          )}
           {active === 'Student Fees' && (
             <StudentFees accounts={accounts} onRefreshAccounts={loadAccounts} />
           )}
@@ -3364,6 +3368,7 @@ async function handleVoucherSaved() {
   'Journal Vouchers',
   'Chart of Accounts',
   'Financial Reports',
+  'Payroll & Staff',
   'Student Fees',
   'Examination & Marksheet',
   'User Management'
