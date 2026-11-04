@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { registerPayrollRoutes } from './payroll.routes.js';
 
 dotenv.config();
 
@@ -3028,6 +3029,8 @@ async function requireAuth(req, res, next) {
     });
   }
 }
+
+registerPayrollRoutes(app, pool, requireAuth);
 
 function requireAdmin(req, res, next) {
   if (req.authUser?.role !== 'admin') {
