@@ -3114,7 +3114,10 @@ useEffect(() => {
   loadTodayTransactions();
 }, []);
 async function handleVoucherSaved() {
-  await loadTodayTransactions();
+  await Promise.all([
+    loadAccounts(),
+    loadTodayTransactions()
+  ]);
 }
   if (showPortfolio) return <PortfolioDashboard onOpenSchool={() => setShowPortfolio(false)} />;
   if (!user) return <LoginSystem onLogin={setUser} />;
