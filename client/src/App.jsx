@@ -42,6 +42,11 @@ const money = value =>
     maximumFractionDigits: 2
   })}`;
 
+const balanceWithDrCr = value => {
+  const amount = Number(value || 0);
+  return `${money(Math.abs(amount))} ${amount > 0 ? 'Dr' : amount < 0 ? 'Cr' : ''}`.trim();
+};
+
 function getTodayAD() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1768,9 +1773,9 @@ function FinancialReports({ accounts }) {
               Chart of Accounts का Cash र Bank group अन्तर्गतका सक्रिय Ledger balance अनुसार Financial Reports सारांश।
             </p>
             <div style={styles.metricsGrid}>
-              <Metric title="Total Cash / कुल नगद" value={money(totalCash)} note={cashLedgers.length + ' cash ledgers'} icon={<Wallet size={20}/>} color="#059669" bg="#ecfdf5"/>
-              <Metric title="Total Bank / कुल बैंक" value={money(totalBank)} note={bankLedgers.length + ' bank ledgers'} icon={<Landmark size={20}/>} color="#2563eb" bg="#dbeafe"/>
-              <Metric title="Cash + Bank / जम्मा" value={money(totalCash + totalBank)} note="कुल नगद + कुल बैंक" icon={<CreditCard size={20}/>} color="#7c3aed" bg="#ede9fe"/>
+              <Metric title="Total Cash / कुल नगद" value={balanceWithDrCr(totalCash)} note={cashLedgers.length + ' cash ledgers'} icon={<Wallet size={20}/>} color="#059669" bg="#ecfdf5"/>
+              <Metric title="Total Bank / कुल बैंक" value={balanceWithDrCr(totalBank)} note={bankLedgers.length + ' bank ledgers'} icon={<Landmark size={20}/>} color="#2563eb" bg="#dbeafe"/>
+              <Metric title="Cash + Bank / जम्मा" value={balanceWithDrCr(totalCash + totalBank)} note="कुल नगद + कुल बैंक" icon={<CreditCard size={20}/>} color="#7c3aed" bg="#ede9fe"/>
             </div>
             {[
               ['Cash Ledgers / नगद खाताहरू', cashLedgers, totalCash],
@@ -1779,7 +1784,7 @@ function FinancialReports({ accounts }) {
               <div key={title} style={{ marginTop: 22 }}>
                 <div style={{ ...styles.panelHeading, marginBottom: 10 }}>
                   <h3 style={styles.panelTitle}>{title}</h3>
-                  <strong>{money(total)}</strong>
+                  <strong>{balanceWithDrCr(total)}</strong>
                 </div>
                 <div style={styles.tableWrap}>
                   <table style={styles.table}>
@@ -1790,7 +1795,7 @@ function FinancialReports({ accounts }) {
                           <td>{account.code || '—'}</td>
                           <td><strong>{account.name}</strong></td>
                           <td>{parentGroupName(account) || '—'}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(account.balance)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 700 }}>{balanceWithDrCr(account.balance)}</td>
                         </tr>
                       ))}
                       {!rows.length && <tr><td colSpan="4" style={styles.emptyCell}>यस समूहअन्तर्गत सक्रिय Ledger भेटिएन।</td></tr>}
@@ -3067,7 +3072,7 @@ function CashBank({ accounts, loading, error, onReload }) {
           <h2 style={styles.panelTitle}>{title}</h2>
           <p style={styles.panelDesc}>{subtitle}</p>
         </div>
-        <strong style={{ color: '#047857', fontSize: 18 }}>{money(amount)}</strong>
+        <strong style={{ color: '#047857', fontSize: 18 }}>{balanceWithDrCr(amount)}</strong>
       </div>
       <div style={styles.tableWrap}>
         <table style={styles.table}>
@@ -3078,7 +3083,7 @@ function CashBank({ accounts, loading, error, onReload }) {
                 <td><strong style={{ color: '#4f46e5' }}>{account.code || '—'}</strong></td>
                 <td>{icon} <strong>{account.name}</strong></td>
                 <td>{getParentLabel(account) || '—'}</td>
-                <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(account.balance)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700 }}>{balanceWithDrCr(account.balance)}</td>
               </tr>
             ))}
             {!items.length && <tr><td colSpan="4" style={styles.emptyCell}>यस समूहअन्तर्गत सक्रिय Ledger भेटिएन। Chart of Accounts मा Cash वा Bank group अन्तर्गत Ledger थप्नुहोस्।</td></tr>}
@@ -3102,9 +3107,9 @@ function CashBank({ accounts, loading, error, onReload }) {
       {loading ? <section style={styles.panel}>Ledger विवरण लोड हुँदैछ...</section> : (
         <>
           <div style={styles.metricsGrid}>
-            <Metric title="कुल नगद / Total Cash" value={money(total(cashLedgers))} note={cashLedgers.length + ' active cash ledgers'} icon={<Wallet size={20}/>} color="#059669" bg="#d1fae5"/>
-            <Metric title="कुल बैंक / Total Bank" value={money(total(bankLedgers))} note={bankLedgers.length + ' active bank ledgers'} icon={<Landmark size={20}/>} color="#2563eb" bg="#dbeafe"/>
-            <Metric title="कुल नगद तथा बैंक" value={money(total(cashLedgers) + total(bankLedgers))} note="Cash + Bank ledger balance" icon={<CreditCard size={20}/>} color="#7c3aed" bg="#ede9fe"/>
+            <Metric title="कुल नगद / Total Cash" value={balanceWithDrCr(total(cashLedgers))} note={cashLedgers.length + ' active cash ledgers'} icon={<Wallet size={20}/>} color="#059669" bg="#d1fae5"/>
+            <Metric title="कुल बैंक / Total Bank" value={balanceWithDrCr(total(bankLedgers))} note={bankLedgers.length + ' active bank ledgers'} icon={<Landmark size={20}/>} color="#2563eb" bg="#dbeafe"/>
+            <Metric title="कुल नगद तथा बैंक" value={balanceWithDrCr(total(cashLedgers) + total(bankLedgers))} note="Cash + Bank ledger balance" icon={<CreditCard size={20}/>} color="#7c3aed" bg="#ede9fe"/>
           </div>
           <LedgerTable title="Cash Ledgers / नगद खाताहरू" subtitle="Cash group अन्तर्गतका Ledger मात्र" items={cashLedgers} amount={total(cashLedgers)} icon="💵"/>
           <LedgerTable title="Bank Ledgers / बैंक खाताहरू" subtitle="Bank group अन्तर्गतका Ledger मात्र" items={bankLedgers} amount={total(bankLedgers)} icon="🏦"/>
