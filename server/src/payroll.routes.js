@@ -166,12 +166,14 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   router.put('/items/:id/bank-transfer',async(req,res)=>{
     const b=req.body||{};
     const amount=money(b.paidAmount);
-    if(!b.paymentReference||amount<0)return res.status(400).json({message:'बैंक भौचर/Reference र सही रकम आवश्यक छ।'});
+    if(!b.paymentReference||amount<=0)return res.status(400).json({message:'बैंक भौचर/Reference र शून्यभन्दा ठूलो जम्मा रकम आवश्यक छ।'});
     try{
+      const current=await pool.query('SELECT net_salary FROM payroll_items WHERE organization_id=$1 AND id=$2',[orgId(req),req.params.id]);
+      if(!current.rowCount)return res.status(404).json({message:'Payroll item भेटिएन।'});
+      if(amount>money(current.rows[0].net_salary))return res.status(400).json({message:'जम्मा रकम Net Salary भन्दा बढी हुन मिल्दैन।'});
       const r=await pool.query(`UPDATE payroll_items SET paid_amount=$3,payment_method='bank_transfer',
-        payment_reference=$4,paid_at=CASE WHEN $3>0 THEN COALESCE($5::timestamptz,NOW()) ELSE NULL END
+        payment_reference=$4,paid_at=COALESCE($5::timestamptz,NOW())
         WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),req.params.id,amount,String(b.paymentReference).trim(),b.paidAt||null]);
-      if(!r.rowCount)return res.status(404).json({message:'Payroll item भेटिएन।'});
       res.json(r.rows[0]);
     }catch(e){res.status(500).json({message:'Bank transfer विवरण सुरक्षित भएन।'});}
   });
