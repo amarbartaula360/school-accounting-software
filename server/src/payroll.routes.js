@@ -73,7 +73,7 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   });
   router.post('/advances',async(req,res)=>{
     const b=req.body||{};if(!b.staffId||!(money(b.amount)>0))return res.status(400).json({message:'कर्मचारी र सही पेश्की रकम आवश्यक छ।'});
-    try{const r=await pool.query(`INSERT INTO payroll_advances(organization_id,staff_id,advance_date,amount,installment_amount,description,advance_type,installment_count,start_period_bs) SELECT $1,id,$3,$4,$5,$6,$7,$8,$9 FROM payroll_staff WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),b.staffId,b.date||new Date().toISOString().slice(0,10),money(b.amount),money(b.installmentAmount),b.description||null,b.advanceType||'salary_advance',b.installmentCount?Number(b.installmentCount):null,b.startPeriodBS||null]);if(!r.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});res.status(201).json(r.rows[0]);}
+    try{const r=await pool.query(`INSERT INTO payroll_advances(organization_id,staff_id,advance_date,amount,installment_amount,description,advance_type,installment_count,start_period_bs) SELECT $1,id,$3,$4,$5,$6,$7,$8,$9 FROM payroll_staff WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),b.staffId,b.date||new Date().toISOString().slice(0,10),money(b.amount),(money(b.installmentAmount)|| (Number(b.installmentCount)>0?Math.ceil(money(b.amount)/Number(b.installmentCount)*100)/100:0)),b.description||null,b.advanceType||'salary_advance',b.installmentCount?Number(b.installmentCount):null,b.startPeriodBS||null]);if(!r.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});res.status(201).json(r.rows[0]);}
     catch(e){res.status(500).json({message:'पेश्की सुरक्षित भएन।'});}
   });
 
