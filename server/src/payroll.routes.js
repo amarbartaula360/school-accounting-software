@@ -79,6 +79,56 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
     finally{client.release();}
   });
 
+
+  router.get('/attendance/requests',async(req,res)=>{
+    try{
+      const r=await pool.query(`SELECT q.*,s.employee_code,s.full_name,s.designation
+        FROM payroll_attendance_requests q JOIN payroll_staff s ON s.id=q.staff_id
+        WHERE q.organization_id=$1 ORDER BY q.created_at DESC LIMIT 500`,[orgId(req)]);
+      res.json(r.rows);
+    }catch(e){console.error('Attendance requests:',e);res.status(503).json({message:'Leave/Field Visit को database migration चलाउनुहोस्।'});}
+  });
+  router.post('/attendance/requests',async(req,res)=>{
+    const b=req.body||{};
+    const type=String(b.requestType||'');
+    const start=String(b.startDate||'').slice(0,10),end=String(b.endDate||'').slice(0,10);
+    if(!b.staffId||!['leave','field_visit'].includes(type)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(start)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(end)||end<start||!String(b.reason||'').trim())
+      return res.status(400).json({message:'कर्मचारी, अनुरोध प्रकार, सही मिति र कारण अनिवार्य छन्।'});
+    if((Date.parse(end)-Date.parse(start))/86400000>90)return res.status(400).json({message:'एक पटकमा बढीमा ९० दिनको अनुरोध गर्न सकिन्छ।'});
+    try{
+      const staff=await pool.query('SELECT id FROM payroll_staff WHERE organization_id=$1 AND id=$2 AND is_active=true',[orgId(req),b.staffId]);
+      if(!staff.rowCount)return res.status(404).json({message:'सक्रिय कर्मचारी भेटिएन।'});
+      const overlap=await pool.query(`SELECT 1 FROM payroll_attendance_requests WHERE organization_id=$1 AND staff_id=$2 AND status IN ('pending','approved') AND daterange(start_date,end_date,'[]') && daterange($3::date,$4::date,'[]') LIMIT 1`,[orgId(req),b.staffId,start,end]);
+      if(overlap.rowCount)return res.status(409).json({message:'यो अवधिमा पहिले नै Pending वा Approved अनुरोध छ।'});
+      const r=await pool.query(`INSERT INTO payroll_attendance_requests(organization_id,staff_id,request_type,start_date,end_date,reason,status)
+        VALUES($1,$2,$3,$4,$5,$6,'pending') RETURNING *`,[orgId(req),b.staffId,type,start,end,String(b.reason).trim()]);
+      res.status(201).json(r.rows[0]);
+    }catch(e){console.error('Create attendance request:',e);res.status(500).json({message:'अनुरोध सुरक्षित गर्न सकिएन। Migration चलाइएको छ कि जाँच्नुहोस्।'});}
+  });
+  router.patch('/attendance/requests/:id',async(req,res)=>{
+    const status=String(req.body?.status||'');
+    if(!['approved','rejected'].includes(status))return res.status(400).json({message:'Approved वा Rejected छान्नुहोस्।'});
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const found=await client.query(`SELECT * FROM payroll_attendance_requests WHERE organization_id=$1 AND id=$2 FOR UPDATE`,[orgId(req),req.params.id]);
+      if(!found.rowCount){await client.query('ROLLBACK');return res.status(404).json({message:'अनुरोध भेटिएन।'});}
+      const q=found.rows[0];
+      if(q.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({message:'यो अनुरोध पहिले नै निर्णय भइसकेको छ।'});}
+      await client.query(`UPDATE payroll_attendance_requests SET status=$3,admin_note=$4,decided_at=NOW(),decided_by=$5,updated_at=NOW() WHERE organization_id=$1 AND id=$2`,[orgId(req),req.params.id,status,String(req.body?.adminNote||'').trim()||null,String(req.authUser?.email||req.authUser?.username||'Admin')]);
+      if(status==='approved'){
+        const attendanceStatus=q.request_type==='leave'?'on_leave':'field_visit';
+        await client.query(`INSERT INTO payroll_attendance(organization_id,staff_id,attendance_date,status,source)
+          SELECT $1,$2,d::date,$5,'manual' FROM generate_series($3::date,$4::date,interval '1 day') d
+          ON CONFLICT(organization_id,staff_id,attendance_date) DO UPDATE SET status=EXCLUDED.status,source='manual'`,
+          [orgId(req),q.staff_id,q.start_date,q.end_date,attendanceStatus]);
+      }
+      const result=await client.query(`SELECT q.*,s.employee_code,s.full_name,s.designation FROM payroll_attendance_requests q JOIN payroll_staff s ON s.id=q.staff_id WHERE q.organization_id=$1 AND q.id=$2`,[orgId(req),req.params.id]);
+      await client.query('COMMIT');res.json(result.rows[0]);
+    }catch(e){await client.query('ROLLBACK');console.error('Review attendance request:',e);res.status(500).json({message:'अनुरोधको निर्णय सुरक्षित गर्न सकिएन।'});}
+    finally{client.release();}
+  });
+
   router.get('/advances',async(req,res)=>{
     try{const r=await pool.query(`SELECT a.*,s.employee_code,s.full_name,(a.amount-a.recovered_amount) AS balance FROM payroll_advances a JOIN payroll_staff s ON s.id=a.staff_id WHERE a.organization_id=$1 ORDER BY a.advance_date DESC`,[orgId(req)]);res.json(r.rows);}
     catch(e){res.status(500).json({message:'Advance list load भएन।'});}
