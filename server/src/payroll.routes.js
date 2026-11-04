@@ -10,13 +10,24 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   router.get('/dashboard', async (req,res) => {
     try {
       const id=orgId(req);
-      const [staff,attendance,payroll,advances]=await Promise.all([
+      const [staff,attendanceRows,payroll,advances]=await Promise.all([
         pool.query('SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE is_active)::int AS active FROM payroll_staff WHERE organization_id=$1',[id]),
-        pool.query("SELECT COUNT(*) FILTER (WHERE status='present')::int AS present, COUNT(*) FILTER (WHERE status='absent')::int AS absent, COUNT(*) FILTER (WHERE status='late')::int AS late FROM payroll_attendance WHERE organization_id=$1 AND attendance_date=CURRENT_DATE",[id]),
+        pool.query(`SELECT s.id,s.employee_code,s.full_name,s.designation,a.check_in,a.check_out,a.status,
+          COALESCE(a.late_minutes,0)::int AS late_minutes,
+          CASE WHEN a.status='late' THEN 'late'
+               WHEN a.status='present' THEN 'present'
+               WHEN a.status='absent' OR a.staff_id IS NULL THEN 'absent'
+               ELSE a.status END AS attendance_group
+          FROM payroll_staff s
+          LEFT JOIN payroll_attendance a ON a.staff_id=s.id AND a.organization_id=s.organization_id AND a.attendance_date=CURRENT_DATE
+          WHERE s.organization_id=$1 AND s.is_active=true
+          ORDER BY s.full_name`,[id]),
         pool.query('SELECT COALESCE(SUM(total_net),0) AS latest_net, MAX(period_bs) AS latest_period FROM payroll_runs WHERE organization_id=$1',[id]),
         pool.query("SELECT COALESCE(SUM(amount-recovered_amount),0) AS outstanding FROM payroll_advances WHERE organization_id=$1 AND status='open'",[id])
       ]);
-      res.json({staff:staff.rows[0],attendance:attendance.rows[0],payroll:payroll.rows[0],advances:advances.rows[0]});
+      const attendanceLists={present:attendanceRows.rows.filter(x=>x.attendance_group==='present'),absent:attendanceRows.rows.filter(x=>x.attendance_group==='absent'),late:attendanceRows.rows.filter(x=>x.attendance_group==='late')};
+      const attendance={present:attendanceLists.present.length,absent:attendanceLists.absent.length,late:attendanceLists.late.length};
+      res.json({staff:staff.rows[0],attendance,attendanceLists,payroll:payroll.rows[0],advances:advances.rows[0]});
     } catch(e){ console.error('Payroll dashboard:',e); res.status(500).json({message:'Payroll dashboard load भएन।'}); }
   });
 
