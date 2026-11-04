@@ -48,3 +48,9 @@ CROSS JOIN (VALUES
  ('OTHER_DEDUCTION','अन्य कट्टी','deduction','fixed',0,'basic',FALSE,100)
 ) AS v(code,name,type,calc,amount,base,taxable,ord)
 WHERE NOT EXISTS (SELECT 1 FROM payroll_salary_heads h WHERE h.organization_id=o.id AND h.head_code=v.code);
+
+-- Bank transfer and demo-data support.
+ALTER TABLE payroll_staff
+  ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_payroll_staff_demo ON payroll_staff(organization_id,is_demo);
+CREATE INDEX IF NOT EXISTS idx_payroll_items_org_run ON payroll_items(organization_id,payroll_run_id);
