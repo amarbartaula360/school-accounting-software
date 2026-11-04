@@ -1,0 +1,37 @@
+name: Payroll feature build check
+
+on:
+  push:
+    branches:
+      - main
+      - feature/advanced-monthly-payroll
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  client-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+      - name: Build frontend
+        working-directory: client
+        run: npm run build
+
+  server-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check payroll route syntax
+        run: node --check server/src/payroll.routes.js

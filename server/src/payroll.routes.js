@@ -73,8 +73,30 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   });
   router.post('/advances',async(req,res)=>{
     const b=req.body||{};if(!b.staffId||!(money(b.amount)>0))return res.status(400).json({message:'कर्मचारी र सही पेश्की रकम आवश्यक छ।'});
-    try{const r=await pool.query(`INSERT INTO payroll_advances(organization_id,staff_id,advance_date,amount,installment_amount,description) SELECT $1,id,$3,$4,$5,$6 FROM payroll_staff WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),b.staffId,b.date||new Date().toISOString().slice(0,10),money(b.amount),money(b.installmentAmount),b.description||null]);if(!r.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});res.status(201).json(r.rows[0]);}
+    try{const r=await pool.query(`INSERT INTO payroll_advances(organization_id,staff_id,advance_date,amount,installment_amount,description,advance_type,installment_count,start_period_bs) SELECT $1,id,$3,$4,$5,$6,$7,$8,$9 FROM payroll_staff WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),b.staffId,b.date||new Date().toISOString().slice(0,10),money(b.amount),(money(b.installmentAmount)|| (Number(b.installmentCount)>0?Math.ceil(money(b.amount)/Number(b.installmentCount)*100)/100:0)),b.description||null,b.advanceType||'salary_advance',b.installmentCount?Number(b.installmentCount):null,b.startPeriodBS||null]);if(!r.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});res.status(201).json(r.rows[0]);}
     catch(e){res.status(500).json({message:'पेश्की सुरक्षित भएन।'});}
+  });
+
+  router.get('/heads',async(req,res)=>{
+    try{const r=await pool.query('SELECT * FROM payroll_salary_heads WHERE organization_id=$1 ORDER BY display_order,id',[orgId(req)]);res.json(r.rows);}
+    catch(e){res.status(500).json({message:'Salary headings load भएन।'});}
+  });
+  router.post('/heads',async(req,res)=>{
+    const b=req.body||{};
+    if(!b.headCode||!b.headName||!['earning','deduction','tax'].includes(b.headType)||!['fixed','percentage'].includes(b.calculationType)||money(b.amount)<0)return res.status(400).json({message:'शीर्षक, प्रकार र रकम सही राख्नुहोस्।'});
+    try{
+      const r=await pool.query(`INSERT INTO payroll_salary_heads(organization_id,head_code,head_name,head_type,calculation_type,amount,percentage_base,is_taxable,display_order)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[orgId(req),String(b.headCode).trim().toUpperCase(),String(b.headName).trim(),b.headType,b.calculationType,money(b.amount),b.percentageBase==='gross'?'gross':'basic',b.isTaxable!==false,Number(b.displayOrder||0)]);
+      res.status(201).json(r.rows[0]);
+    }catch(e){res.status(e.code==='23505'?409:500).json({message:e.code==='23505'?'यो Salary Code पहिले नै छ।':'शीर्षक सुरक्षित गर्न सकिएन।'});}
+  });
+  router.put('/heads/:id',async(req,res)=>{
+    const b=req.body||{};
+    try{
+      const r=await pool.query(`UPDATE payroll_salary_heads SET head_name=$3,head_type=$4,calculation_type=$5,amount=$6,percentage_base=$7,is_taxable=$8,is_active=$9,display_order=$10
+      WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),req.params.id,b.headName,b.headType,b.calculationType,money(b.amount),b.percentageBase==='gross'?'gross':'basic',b.isTaxable!==false,b.isActive!==false,Number(b.displayOrder||0)]);
+      if(!r.rowCount)return res.status(404).json({message:'शीर्षक भेटिएन।'});res.json(r.rows[0]);
+    }catch(e){res.status(400).json({message:'शीर्षक update भएन।'});}
   });
 
   router.get('/runs',async(req,res)=>{
@@ -89,27 +111,91 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
       await client.query('BEGIN');const id=orgId(req);
       const exists=await client.query('SELECT id FROM payroll_runs WHERE organization_id=$1 AND period_bs=$2',[id,b.periodBS]);
       if(exists.rowCount){await client.query('ROLLBACK');return res.status(409).json({message:'यो महिनाको Payroll पहिले नै बनेको छ।'});}
-      const staff=await client.query('SELECT * FROM payroll_staff WHERE organization_id=$1 AND is_active=TRUE ORDER BY id',[id]);
-      let totals={basic:0,allowances:0,overtime:0,deductions:0,advance:0,net:0};const items=[];
-      for(const s of staff.rows){
-        const att=await client.query(`SELECT COUNT(*) FILTER(WHERE status='present')::int present,COUNT(*) FILTER(WHERE status='absent')::int absent,COALESCE(SUM(overtime_minutes),0)::int overtime FROM payroll_attendance WHERE organization_id=$1 AND staff_id=$2 AND attendance_date BETWEEN $3 AND $4`,[id,s.id,b.startDate,b.endDate]);
-        const days=att.rows[0];const totalDays=Math.max(1,Number(b.workingDays||30));const absentDeduction=Math.round((money(s.basic_salary)/totalDays)*days.absent*100)/100;
-        const overtimeAmount=Math.round((money(s.basic_salary)/totalDays/8/60*days.overtime*1.5)*100)/100;
-        const adv=await client.query("SELECT id,LEAST(amount-recovered_amount,CASE WHEN installment_amount>0 THEN installment_amount ELSE amount-recovered_amount END) AS due FROM payroll_advances WHERE organization_id=$1 AND staff_id=$2 AND status='open' AND amount>recovered_amount ORDER BY advance_date",[id,s.id]);
+      const [staff,headResult]=await Promise.all([
+        client.query('SELECT * FROM payroll_staff WHERE organization_id=$1 AND is_active=TRUE ORDER BY id',[id]),
+        client.query('SELECT * FROM payroll_salary_heads WHERE organization_id=$1 AND is_active=TRUE ORDER BY display_order,id',[id])
+      ]);
+      const heads=headResult.rows;
+      let totals={basic:0,allowances:0,overtime:0,deductions:0,tax:0,otherEarnings:0,advance:0,net:0};const items=[];
+      for(const person of staff.rows){
+        const att=await client.query(`SELECT COUNT(*) FILTER(WHERE status='absent')::int absent,COALESCE(SUM(overtime_minutes),0)::int overtime FROM payroll_attendance WHERE organization_id=$1 AND staff_id=$2 AND attendance_date BETWEEN $3 AND $4`,[id,person.id,b.startDate,b.endDate]);
+        const days=att.rows[0],totalDays=Math.max(1,Number(b.workingDays||30));
+        const basic=money(person.basic_salary),allow=money(person.allowances);
+        const absentDeduction=Math.round((basic/totalDays)*days.absent*100)/100;
+        const overtimeAmount=Math.round((basic/totalDays/8/60*days.overtime*1.5)*100)/100;
+        const grossBase=basic+allow+overtimeAmount;
+        const adv=await client.query("SELECT id,LEAST(amount-recovered_amount,CASE WHEN installment_amount>0 THEN installment_amount ELSE amount-recovered_amount END) AS due FROM payroll_advances WHERE organization_id=$1 AND staff_id=$2 AND status='open' AND amount>recovered_amount AND (start_period_bs IS NULL OR start_period_bs<=$3) ORDER BY advance_date,id FOR UPDATE",[id,person.id,b.periodBS]);
         const advanceDeduction=adv.rows.reduce((n,x)=>n+money(x.due),0);
-        const basic=money(s.basic_salary),allow=money(s.allowances),net=Math.max(0,basic+allow+overtimeAmount-absentDeduction-advanceDeduction);
-        totals.basic+=basic;totals.allowances+=allow;totals.overtime+=overtimeAmount;totals.deductions+=absentDeduction;totals.advance+=advanceDeduction;totals.net+=net;
-        items.push({staffId:s.id,basic,allow,overtimeAmount,absentDeduction,advanceDeduction,net,advanceIds:adv.rows.map(x=>x.id)});
+        let otherEarnings=0,otherDeductions=0,taxDeduction=0;const breakdown=[];
+        for(const h of [...heads].sort((a,b)=>(a.head_type==='earning'?0:1)-(b.head_type==='earning'?0:1))){
+          const base=h.percentage_base==='gross'?(grossBase+otherEarnings):basic;
+          const amount=h.calculation_type==='percentage'?Math.round(base*money(h.amount)/100*100)/100:money(h.amount);
+          breakdown.push({id:h.id,code:h.head_code,name:h.head_name,type:h.head_type,calculationType:h.calculation_type,rate:money(h.amount),amount});
+          if(h.head_type==='earning')otherEarnings+=amount;
+          else if(h.head_type==='tax')taxDeduction+=amount;
+          else otherDeductions+=amount;
+        }
+        const gross=grossBase+otherEarnings;
+        const net=Math.max(0,gross-absentDeduction-otherDeductions-taxDeduction-advanceDeduction);
+        totals.basic+=basic;totals.allowances+=allow;totals.overtime+=overtimeAmount;totals.deductions+=absentDeduction+otherDeductions;totals.tax+=taxDeduction;totals.otherEarnings+=otherEarnings;totals.advance+=advanceDeduction;totals.net+=net;
+        items.push({staffId:person.id,basic,allow,overtimeAmount,absentDeduction,otherEarnings,otherDeductions,taxDeduction,advanceDeduction,net,advanceIds:adv.rows.map(x=>x.id),breakdown});
       }
-      const run=await client.query(`INSERT INTO payroll_runs(organization_id,period_bs,period_start,period_end,total_basic,total_allowances,total_overtime,total_deductions,total_advance,total_net,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[id,b.periodBS,b.startDate,b.endDate,totals.basic,totals.allowances,totals.overtime,totals.deductions,totals.advance,totals.net,req.authUser.id]);
+      const run=await client.query(`INSERT INTO payroll_runs(organization_id,period_bs,period_start,period_end,total_basic,total_allowances,total_overtime,total_deductions,total_advance,total_net,total_other_earnings,total_tax,created_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[id,b.periodBS,b.startDate,b.endDate,totals.basic,totals.allowances,totals.overtime,totals.deductions,totals.advance,totals.net,totals.otherEarnings,totals.tax,req.authUser.id]);
       for(const x of items){
-        await client.query(`INSERT INTO payroll_items(payroll_run_id,organization_id,staff_id,basic_salary,allowances,overtime_amount,absent_deduction,advance_deduction,net_salary) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[run.rows[0].id,id,x.staffId,x.basic,x.allow,x.overtimeAmount,x.absentDeduction,x.advanceDeduction,x.net]);
-        let remaining=x.advanceDeduction;for(const aid of x.advanceIds){if(remaining<=0)break;const adv=await client.query('SELECT amount,recovered_amount FROM payroll_advances WHERE id=$1 FOR UPDATE',[aid]);const used=Math.min(remaining,money(adv.rows[0].amount)-money(adv.rows[0].recovered_amount));await client.query("UPDATE payroll_advances SET recovered_amount=recovered_amount+$2,status=CASE WHEN recovered_amount+$2>=amount THEN 'closed' ELSE 'open' END WHERE id=$1",[aid,used]);remaining-=used;}
+        await client.query(`INSERT INTO payroll_items(payroll_run_id,organization_id,staff_id,basic_salary,allowances,overtime_amount,absent_deduction,other_deductions,advance_deduction,net_salary,other_earnings,tax_deduction,salary_breakdown)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)`,[run.rows[0].id,id,x.staffId,x.basic,x.allow,x.overtimeAmount,x.absentDeduction,x.otherDeductions,x.advanceDeduction,x.net,x.otherEarnings,x.taxDeduction,JSON.stringify(x.breakdown)]);
+        let remaining=x.advanceDeduction;
+        for(const aid of x.advanceIds){if(remaining<=0)break;const adv=await client.query('SELECT amount,recovered_amount FROM payroll_advances WHERE id=$1 FOR UPDATE',[aid]);const used=Math.min(remaining,money(adv.rows[0].amount)-money(adv.rows[0].recovered_amount));await client.query("UPDATE payroll_advances SET recovered_amount=recovered_amount+$2,status=CASE WHEN recovered_amount+$2>=amount THEN 'closed' ELSE 'open' END WHERE id=$1",[aid,used]);remaining-=used;}
       }
       await client.query('COMMIT');res.status(201).json({run:run.rows[0],items:items.length});
     }catch(e){await client.query('ROLLBACK');console.error('Payroll generation:',e);res.status(500).json({message:'Payroll generate गर्न सकिएन।'});}
     finally{client.release();}
   });
+  // Detailed employee payroll register with bank-transfer details.
+  router.get('/runs/:id/items',async(req,res)=>{
+    try{
+      const r=await pool.query(`SELECT pi.*,s.employee_code,s.full_name,s.designation,s.bank_name,s.bank_account_name,s.bank_account_number
+        FROM payroll_items pi JOIN payroll_staff s ON s.id=pi.staff_id
+        JOIN payroll_runs pr ON pr.id=pi.payroll_run_id
+        WHERE pi.organization_id=$1 AND pi.payroll_run_id=$2 ORDER BY s.full_name`,[orgId(req),req.params.id]);
+      res.json(r.rows);
+    }catch(e){res.status(500).json({message:'कर्मचारी तलब विवरण load भएन।'});}
+  });
+  // Record a bank transfer only after the operator confirms it was deposited.
+  router.put('/items/:id/bank-transfer',async(req,res)=>{
+    const b=req.body||{};
+    const amount=money(b.paidAmount);
+    if(!b.paymentReference||amount<=0)return res.status(400).json({message:'बैंक भौचर/Reference र शून्यभन्दा ठूलो जम्मा रकम आवश्यक छ।'});
+    try{
+      const current=await pool.query('SELECT net_salary FROM payroll_items WHERE organization_id=$1 AND id=$2',[orgId(req),req.params.id]);
+      if(!current.rowCount)return res.status(404).json({message:'Payroll item भेटिएन।'});
+      if(amount>money(current.rows[0].net_salary))return res.status(400).json({message:'जम्मा रकम Net Salary भन्दा बढी हुन मिल्दैन।'});
+      const r=await pool.query(`UPDATE payroll_items SET paid_amount=$3,payment_method='bank_transfer',
+        payment_reference=$4,paid_at=COALESCE($5::timestamptz,NOW())
+        WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),req.params.id,amount,String(b.paymentReference).trim(),b.paidAt||null]);
+      res.json(r.rows[0]);
+    }catch(e){res.status(500).json({message:'Bank transfer विवरण सुरक्षित भएन।'});}
+  });
+  // Add a clearly labelled set of 50 demo employees once per organization.
+  router.post('/demo-staff',async(req,res)=>{
+    const names=['आर्यन अधिकारी','स्मृति श्रेष्ठ','प्रकाश थापा','अनिता गुरुङ','सन्देश लामिछाने','पूजा कार्की','विवेक पौडेल','रचना तामाङ','सुशील भण्डारी','निशा मगर','रोशन खड्का','कविता शर्मा','दीपक बस्नेत','सरिता राई','सागर न्यौपाने','ममता चौधरी','अमित पोखरेल','सीता परियार','बिनोद दाहाल','अस्मिता महतो','राजेश घिमिरे','रीता काफ्ले','नवीन बर्तौला','सविना मोक्तान','कमल सुवेदी','प्रमिला तिमिल्सिना','मनोज उप्रेती','संगीता वाइबा','विकास श्रेष्ठ','एलिना अधिकारी','सन्तोष राना','मेनुका खनाल','अर्जुन सापकोटा','दीपा तामाङ','निरज लामिछाने','सुष्मा पौडेल','रमेश विश्वकर्मा','आशा गुरुङ','कृष्ण न्यौपाने','मिना थापा','अभिषेक कार्की','बिना राई','प्रदीप भुजेल','सिर्जना मगर','उज्ज्वल खड्का','लक्ष्मी चौधरी','समीर दाहाल','रोशनी पोखरेल','हरि घिमिरे','सविता श्रेष्ठ'];
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');const id=orgId(req);let inserted=0;
+      for(let i=0;i<names.length;i++){
+        const code='DEMO-'+String(i+1).padStart(3,'0');
+        const r=await client.query(`INSERT INTO payroll_staff(organization_id,employee_code,full_name,designation,department,employment_type,basic_salary,allowances,bank_name,bank_account_name,bank_account_number,is_demo)
+          VALUES($1,$2,$3,$4,$5,'permanent',$6,$7,'Demo Bank',$3,$8,TRUE)
+          ON CONFLICT(organization_id,employee_code) DO NOTHING RETURNING id`,
+          [id,code,names[i],['शिक्षक','लेखा सहायक','प्रशासन सहायक','कार्यालय सहयोगी','समन्वयक'][i%5],['शिक्षण','प्रशासन','लेखा','सहायक','समन्वय'][i%5],25000+(i%8)*2500,1500+(i%4)*500,'DEMO-AC-'+String(i+1).padStart(6,'0')]);
+        inserted+=r.rowCount;
+      }
+      await client.query('COMMIT');res.json({ok:true,inserted,message:inserted+' demo staff थपिए।'});
+    }catch(e){await client.query('ROLLBACK');console.error('Demo staff:',e);res.status(500).json({message:'Demo staff थप्न सकिएन। Migration चलेको छ कि जाँच्नुहोस्।'});}
+    finally{client.release();}
+  });
+
   router.get('/reports',async(req,res)=>{
     try{const id=orgId(req);const r=await pool.query(`SELECT pr.id,pr.period_bs,pr.period_start,pr.period_end,pr.total_basic,pr.total_allowances,pr.total_overtime,pr.total_deductions,pr.total_advance,pr.total_net,COUNT(pi.id)::int AS staff_count,COALESCE(SUM(pi.paid_amount),0) AS paid_amount FROM payroll_runs pr LEFT JOIN payroll_items pi ON pi.payroll_run_id=pr.id WHERE pr.organization_id=$1 GROUP BY pr.id ORDER BY pr.period_start DESC`,[id]);res.json(r.rows);}
     catch(e){res.status(500).json({message:'Payroll report load भएन।'});}
