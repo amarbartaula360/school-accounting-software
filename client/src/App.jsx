@@ -561,6 +561,8 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
   const [loadingEntries, setLoadingEntries] = useState(true);
   const [registerError, setRegisterError] = useState('');
   const [editingVoucherId, setEditingVoucherId] = useState(null);
+  const [journalSearch, setJournalSearch] = useState('');
+  const [journalDateFilter, setJournalDateFilter] = useState('all');
 
   const totalDebit = rows.reduce(
     (sum, r) => sum + (Number(r.debit) || 0),
@@ -588,6 +590,28 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
   const ledgerAccounts = accounts.filter(
     account => !account.isGroup && account.isActive !== false
   );
+
+  const todayJournalDate = getTodayAD();
+  const filteredJournalEntries = [...journalEntries]
+    .filter(entry => {
+      const entryDateValue = String(entry.entry_date || '').slice(0, 10);
+      const searchValue = `${entry.voucher_number || ''} ${entry.description || ''} ${entry.voucher_type || ''}`.toLowerCase();
+      const matchesSearch = searchValue.includes(journalSearch.trim().toLowerCase());
+      const matchesDate = journalDateFilter === 'today'
+        ? entryDateValue === todayJournalDate
+        : journalDateFilter === 'older'
+          ? entryDateValue !== todayJournalDate
+          : true;
+      return matchesSearch && matchesDate;
+    })
+    .sort((a, b) => {
+      const dateA = String(a.entry_date || '').slice(0, 10);
+      const dateB = String(b.entry_date || '').slice(0, 10);
+      const todayA = dateA === todayJournalDate;
+      const todayB = dateB === todayJournalDate;
+      if (todayA !== todayB) return todayA ? -1 : 1;
+      return dateB.localeCompare(dateA) || Number(b.id) - Number(a.id);
+    });
 
   async function loadNextVoucherNumber(date = entryDate) {
     setVoucherNumberLoading(true);
@@ -1091,6 +1115,29 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
           </button>
         </div>
 
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(160px, 220px)', gap: '12px', marginBottom: '16px' }}>
+          <input
+            style={styles.input}
+            value={journalSearch}
+            onChange={e => setJournalSearch(e.target.value)}
+            placeholder="भौचर नं., विवरण वा प्रकारबाट खोज्नुहोस्..."
+            aria-label="Search saved journal vouchers"
+          />
+          <select
+            style={styles.selectInput}
+            value={journalDateFilter}
+            onChange={e => setJournalDateFilter(e.target.value)}
+            aria-label="Filter journal vouchers by date"
+          >
+            <option value="all">सबै मिति</option>
+            <option value="today">आजका कारोबार मात्र</option>
+            <option value="older">आज बाहेकका कारोबार</option>
+          </select>
+        </div>
+        <p style={{ ...styles.panelDesc, marginBottom: '12px' }}>
+          आजका भौचरहरू सबैभन्दा माथि, त्यसपछि नयाँ मितिदेखि पुराना मितिसम्म। देखिएका {filteredJournalEntries.length} / {journalEntries.length} भौचर।
+        </p>
+
         {loadingEntries && (
           <Notice message="Saved journal entries load हुँदैछन्..." />
         )}
@@ -1116,7 +1163,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
               </thead>
 
               <tbody>
-                {journalEntries.map(entry => (
+                {filteredJournalEntries.map(entry => (
                   <tr key={entry.id}>
                     <td>
                       <span style={styles.dateBadge}>{toBS(String(entry.entry_date || '').slice(0, 10)) || '-' } BS</span>
@@ -1138,7 +1185,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                   </tr>
                 ))}
 
-                {journalEntries.length === 0 && (
+                {filteredJournalEntries.length === 0 && (
                   <tr>
                     <td colSpan="8" style={styles.emptyCell}>
                       अहिलेसम्म कुनै Journal Voucher रेकर्ड गरिएको छैन।
@@ -1147,13 +1194,13 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                 )}
               </tbody>
 
-              {journalEntries.length > 0 && (
+              {filteredJournalEntries.length > 0 && (
                 <tfoot>
                   <tr>
                     <th colSpan="4" style={{ textAlign: 'right' }}>Total / जम्मा:</th>
                     <th>
                       {money(
-                        journalEntries.reduce(
+                        filteredJournalEntries.reduce(
                           (sum, entry) =>
                             sum + (Number(entry.total_debit) || 0),
                           0
@@ -1162,7 +1209,7 @@ function JournalVoucher({ accounts, onVoucherSaved }) {
                     </th>
                     <th>
                       {money(
-                        journalEntries.reduce(
+                        filteredJournalEntries.reduce(
                           (sum, entry) =>
                             sum + (Number(entry.total_credit) || 0),
                           0
