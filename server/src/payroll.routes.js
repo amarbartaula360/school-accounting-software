@@ -100,8 +100,8 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
       if(!staff.rowCount)return res.status(404).json({message:'सक्रिय कर्मचारी भेटिएन।'});
       const overlap=await pool.query(`SELECT 1 FROM payroll_attendance_requests WHERE organization_id=$1 AND staff_id=$2 AND status IN ('pending','approved') AND daterange(start_date,end_date,'[]') && daterange($3::date,$4::date,'[]') LIMIT 1`,[orgId(req),b.staffId,start,end]);
       if(overlap.rowCount)return res.status(409).json({message:'यो अवधिमा पहिले नै Pending वा Approved अनुरोध छ।'});
-      const r=await pool.query(`INSERT INTO payroll_attendance_requests(organization_id,staff_id,request_type,start_date,end_date,reason,status)
-        VALUES($1,$2,$3,$4,$5,$6,'pending') RETURNING *`,[orgId(req),b.staffId,type,start,end,String(b.reason).trim()]);
+      const r=await pool.query(`INSERT INTO payroll_attendance_requests(organization_id,staff_id,request_type,from_date,to_date,start_date,end_date,reason,status)
+        VALUES($1,$2,$3,$4,$5,$4,$5,$6,'pending') RETURNING *`,[orgId(req),b.staffId,type,start,end,String(b.reason).trim()]);
       res.status(201).json(r.rows[0]);
     }catch(e){console.error('Create attendance request:',e);res.status(500).json({message:'अनुरोध सुरक्षित गर्न सकिएन। Migration चलाइएको छ कि जाँच्नुहोस्।'});}
   });
