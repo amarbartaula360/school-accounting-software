@@ -2939,6 +2939,77 @@ function StudentFees({ accounts, onRefreshAccounts }) {
 }
 
 
+function CashBank({ accounts, loading, error, onReload }) {
+  const activeLedgers = accounts.filter(account =>
+    !account.isGroup && account.isActive !== false
+  );
+  const groupsById = new Map(
+    accounts.filter(account => account.isGroup).map(group => [Number(group.id), group])
+  );
+  const getParentLabel = account =>
+    account.parentName || groupsById.get(Number(account.parentId))?.name || '';
+  const cashLedgers = activeLedgers.filter(account =>
+    /^(cash|नगद)(\\b|\\s|$)/i.test(getParentLabel(account).trim()) ||
+    /cash|नगद/i.test(getParentLabel(account))
+  );
+  const bankLedgers = activeLedgers.filter(account =>
+    /bank|बैंक/i.test(getParentLabel(account))
+  );
+  const total = list => list.reduce((sum, account) => sum + Number(account.balance || 0), 0);
+  const LedgerTable = ({ title, subtitle, items, amount, icon }) => (
+    <section style={styles.panel}>
+      <div style={styles.panelHeading}>
+        <div>
+          <h2 style={styles.panelTitle}>{title}</h2>
+          <p style={styles.panelDesc}>{subtitle}</p>
+        </div>
+        <strong style={{ color: '#047857', fontSize: 18 }}>{money(amount)}</strong>
+      </div>
+      <div style={styles.tableWrap}>
+        <table style={styles.table}>
+          <thead><tr><th>Ledger Code</th><th>Ledger Name</th><th>Under Group</th><th style={{ textAlign: 'right' }}>Balance</th></tr></thead>
+          <tbody>
+            {items.map(account => (
+              <tr key={account.id}>
+                <td><strong style={{ color: '#4f46e5' }}>{account.code || '—'}</strong></td>
+                <td>{icon} <strong>{account.name}</strong></td>
+                <td>{getParentLabel(account) || '—'}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(account.balance)}</td>
+              </tr>
+            ))}
+            {!items.length && <tr><td colSpan="4" style={styles.emptyCell}>यस समूहअन्तर्गत सक्रिय Ledger भेटिएन। Chart of Accounts मा Cash वा Bank group अन्तर्गत Ledger थप्नुहोस्।</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+
+  return (
+    <>
+      <div style={styles.pageHeading}>
+        <div>
+          <div style={styles.eyebrow}>Accounting / लेखा व्यवस्थापन</div>
+          <h1 style={styles.h1}>Cash & Bank</h1>
+          <p style={styles.subtitle}>Chart of Accounts मा Cash र Bank group अन्तर्गत रहेका सक्रिय Ledger तथा तिनको balance यहाँ देखिन्छ।</p>
+        </div>
+        <button type="button" style={styles.secondaryButton} onClick={onReload}>↻ Refresh Ledger</button>
+      </div>
+      {error && <Notice type="error" message={error} />}
+      {loading ? <section style={styles.panel}>Ledger विवरण लोड हुँदैछ...</section> : (
+        <>
+          <div style={styles.metricsGrid}>
+            <Metric title="कुल नगद / Total Cash" value={money(total(cashLedgers))} note={cashLedgers.length + ' active cash ledgers'} icon={<Wallet size={20}/>} color="#059669" bg="#d1fae5"/>
+            <Metric title="कुल बैंक / Total Bank" value={money(total(bankLedgers))} note={bankLedgers.length + ' active bank ledgers'} icon={<Landmark size={20}/>} color="#2563eb" bg="#dbeafe"/>
+            <Metric title="कुल नगद तथा बैंक" value={money(total(cashLedgers) + total(bankLedgers))} note="Cash + Bank ledger balance" icon={<CreditCard size={20}/>} color="#7c3aed" bg="#ede9fe"/>
+          </div>
+          <LedgerTable title="Cash Ledgers / नगद खाताहरू" subtitle="Cash group अन्तर्गतका Ledger मात्र" items={cashLedgers} amount={total(cashLedgers)} icon="💵"/>
+          <LedgerTable title="Bank Ledgers / बैंक खाताहरू" subtitle="Bank group अन्तर्गतका Ledger मात्र" items={bankLedgers} amount={total(bankLedgers)} icon="🏦"/>
+        </>
+      )}
+    </>
+  );
+}
+
 function Placeholder({ title, setActive }) {
   return (
     <section style={{ ...styles.panel, textAlign: 'center', padding: '60px 20px' }}>
@@ -3149,6 +3220,10 @@ async function handleVoucherSaved() {
                  loadTodayTransactions();
             }}
             />
+          )}
+
+          {active === 'Cash & Bank' && (
+            <CashBank accounts={accounts} loading={loading} error={accountsError} onReload={loadAccounts} />
           )}
 
           {active === 'Financial Reports' && (
