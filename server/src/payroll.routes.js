@@ -73,8 +73,30 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   });
   router.post('/advances',async(req,res)=>{
     const b=req.body||{};if(!b.staffId||!(money(b.amount)>0))return res.status(400).json({message:'कर्मचारी र सही पेश्की रकम आवश्यक छ।'});
-    try{const r=await pool.query(`INSERT INTO payroll_advances(organization_id,staff_id,advance_date,amount,installment_amount,description) SELECT $1,id,$3,$4,$5,$6 FROM payroll_staff WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),b.staffId,b.date||new Date().toISOString().slice(0,10),money(b.amount),money(b.installmentAmount),b.description||null]);if(!r.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});res.status(201).json(r.rows[0]);}
+    try{const r=await pool.query(`INSERT INTO payroll_advances(organization_id,staff_id,advance_date,amount,installment_amount,description,advance_type,installment_count,start_period_bs) SELECT $1,id,$3,$4,$5,$6,$7,$8,$9 FROM payroll_staff WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),b.staffId,b.date||new Date().toISOString().slice(0,10),money(b.amount),money(b.installmentAmount),b.description||null,b.advanceType||'salary_advance',b.installmentCount?Number(b.installmentCount):null,b.startPeriodBS||null]);if(!r.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});res.status(201).json(r.rows[0]);}
     catch(e){res.status(500).json({message:'पेश्की सुरक्षित भएन।'});}
+  });
+
+  router.get('/heads',async(req,res)=>{
+    try{const r=await pool.query('SELECT * FROM payroll_salary_heads WHERE organization_id=$1 ORDER BY display_order,id',[orgId(req)]);res.json(r.rows);}
+    catch(e){res.status(500).json({message:'Salary headings load भएन।'});}
+  });
+  router.post('/heads',async(req,res)=>{
+    const b=req.body||{};
+    if(!b.headCode||!b.headName||!['earning','deduction','tax'].includes(b.headType)||!['fixed','percentage'].includes(b.calculationType)||money(b.amount)<0)return res.status(400).json({message:'शीर्षक, प्रकार र रकम सही राख्नुहोस्।'});
+    try{
+      const r=await pool.query(`INSERT INTO payroll_salary_heads(organization_id,head_code,head_name,head_type,calculation_type,amount,percentage_base,is_taxable,display_order)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[orgId(req),String(b.headCode).trim().toUpperCase(),String(b.headName).trim(),b.headType,b.calculationType,money(b.amount),b.percentageBase==='gross'?'gross':'basic',b.isTaxable!==false,Number(b.displayOrder||0)]);
+      res.status(201).json(r.rows[0]);
+    }catch(e){res.status(e.code==='23505'?409:500).json({message:e.code==='23505'?'यो Salary Code पहिले नै छ।':'शीर्षक सुरक्षित गर्न सकिएन।'});}
+  });
+  router.put('/heads/:id',async(req,res)=>{
+    const b=req.body||{};
+    try{
+      const r=await pool.query(`UPDATE payroll_salary_heads SET head_name=$3,head_type=$4,calculation_type=$5,amount=$6,percentage_base=$7,is_taxable=$8,is_active=$9,display_order=$10
+      WHERE organization_id=$1 AND id=$2 RETURNING *`,[orgId(req),req.params.id,b.headName,b.headType,b.calculationType,money(b.amount),b.percentageBase==='gross'?'gross':'basic',b.isTaxable!==false,b.isActive!==false,Number(b.displayOrder||0)]);
+      if(!r.rowCount)return res.status(404).json({message:'शीर्षक भेटिएन।'});res.json(r.rows[0]);
+    }catch(e){res.status(400).json({message:'शीर्षक update भएन।'});}
   });
 
   router.get('/runs',async(req,res)=>{
@@ -83,28 +105,48 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   });
   router.post('/runs',async(req,res)=>{
     const b=req.body||{};
-    if(!/^\d{4}-\d{2}$/.test(String(b.periodBS||''))||!b.startDate||!b.endDate||b.startDate>b.endDate)return res.status(400).json({message:'वि.सं. महिना र सुरु/अन्त्य मिति सही राख्नुहोस्।'});
+    if(!/^\\d{4}-\\d{2}$/.test(String(b.periodBS||''))||!b.startDate||!b.endDate||b.startDate>b.endDate)return res.status(400).json({message:'वि.सं. महिना र सुरु/अन्त्य मिति सही राख्नुहोस्।'});
     const client=await pool.connect();
     try{
       await client.query('BEGIN');const id=orgId(req);
       const exists=await client.query('SELECT id FROM payroll_runs WHERE organization_id=$1 AND period_bs=$2',[id,b.periodBS]);
       if(exists.rowCount){await client.query('ROLLBACK');return res.status(409).json({message:'यो महिनाको Payroll पहिले नै बनेको छ।'});}
-      const staff=await client.query('SELECT * FROM payroll_staff WHERE organization_id=$1 AND is_active=TRUE ORDER BY id',[id]);
-      let totals={basic:0,allowances:0,overtime:0,deductions:0,advance:0,net:0};const items=[];
-      for(const s of staff.rows){
-        const att=await client.query(`SELECT COUNT(*) FILTER(WHERE status='present')::int present,COUNT(*) FILTER(WHERE status='absent')::int absent,COALESCE(SUM(overtime_minutes),0)::int overtime FROM payroll_attendance WHERE organization_id=$1 AND staff_id=$2 AND attendance_date BETWEEN $3 AND $4`,[id,s.id,b.startDate,b.endDate]);
-        const days=att.rows[0];const totalDays=Math.max(1,Number(b.workingDays||30));const absentDeduction=Math.round((money(s.basic_salary)/totalDays)*days.absent*100)/100;
-        const overtimeAmount=Math.round((money(s.basic_salary)/totalDays/8/60*days.overtime*1.5)*100)/100;
-        const adv=await client.query("SELECT id,LEAST(amount-recovered_amount,CASE WHEN installment_amount>0 THEN installment_amount ELSE amount-recovered_amount END) AS due FROM payroll_advances WHERE organization_id=$1 AND staff_id=$2 AND status='open' AND amount>recovered_amount ORDER BY advance_date",[id,s.id]);
+      const [staff,headResult]=await Promise.all([
+        client.query('SELECT * FROM payroll_staff WHERE organization_id=$1 AND is_active=TRUE ORDER BY id',[id]),
+        client.query('SELECT * FROM payroll_salary_heads WHERE organization_id=$1 AND is_active=TRUE ORDER BY display_order,id',[id])
+      ]);
+      const heads=headResult.rows;
+      let totals={basic:0,allowances:0,overtime:0,deductions:0,tax:0,otherEarnings:0,advance:0,net:0};const items=[];
+      for(const person of staff.rows){
+        const att=await client.query(`SELECT COUNT(*) FILTER(WHERE status='absent')::int absent,COALESCE(SUM(overtime_minutes),0)::int overtime FROM payroll_attendance WHERE organization_id=$1 AND staff_id=$2 AND attendance_date BETWEEN $3 AND $4`,[id,person.id,b.startDate,b.endDate]);
+        const days=att.rows[0],totalDays=Math.max(1,Number(b.workingDays||30));
+        const basic=money(person.basic_salary),allow=money(person.allowances);
+        const absentDeduction=Math.round((basic/totalDays)*days.absent*100)/100;
+        const overtimeAmount=Math.round((basic/totalDays/8/60*days.overtime*1.5)*100)/100;
+        const grossBase=basic+allow+overtimeAmount;
+        const adv=await client.query("SELECT id,LEAST(amount-recovered_amount,CASE WHEN installment_amount>0 THEN installment_amount ELSE amount-recovered_amount END) AS due FROM payroll_advances WHERE organization_id=$1 AND staff_id=$2 AND status='open' AND amount>recovered_amount AND (start_period_bs IS NULL OR start_period_bs<=$3) ORDER BY advance_date,id FOR UPDATE",[id,person.id,b.periodBS]);
         const advanceDeduction=adv.rows.reduce((n,x)=>n+money(x.due),0);
-        const basic=money(s.basic_salary),allow=money(s.allowances),net=Math.max(0,basic+allow+overtimeAmount-absentDeduction-advanceDeduction);
-        totals.basic+=basic;totals.allowances+=allow;totals.overtime+=overtimeAmount;totals.deductions+=absentDeduction;totals.advance+=advanceDeduction;totals.net+=net;
-        items.push({staffId:s.id,basic,allow,overtimeAmount,absentDeduction,advanceDeduction,net,advanceIds:adv.rows.map(x=>x.id)});
+        let otherEarnings=0,otherDeductions=0,taxDeduction=0;const breakdown=[];
+        for(const h of heads){
+          const base=h.percentage_base==='gross'?grossBase:basic;
+          const amount=h.calculation_type==='percentage'?Math.round(base*money(h.amount)/100*100)/100:money(h.amount);
+          breakdown.push({id:h.id,code:h.head_code,name:h.head_name,type:h.head_type,calculationType:h.calculation_type,rate:money(h.amount),amount});
+          if(h.head_type==='earning')otherEarnings+=amount;
+          else if(h.head_type==='tax')taxDeduction+=amount;
+          else otherDeductions+=amount;
+        }
+        const gross=grossBase+otherEarnings;
+        const net=Math.max(0,gross-absentDeduction-otherDeductions-taxDeduction-advanceDeduction);
+        totals.basic+=basic;totals.allowances+=allow;totals.overtime+=overtimeAmount;totals.deductions+=absentDeduction+otherDeductions;totals.tax+=taxDeduction;totals.otherEarnings+=otherEarnings;totals.advance+=advanceDeduction;totals.net+=net;
+        items.push({staffId:person.id,basic,allow,overtimeAmount,absentDeduction,otherEarnings,otherDeductions,taxDeduction,advanceDeduction,net,advanceIds:adv.rows.map(x=>x.id),breakdown});
       }
-      const run=await client.query(`INSERT INTO payroll_runs(organization_id,period_bs,period_start,period_end,total_basic,total_allowances,total_overtime,total_deductions,total_advance,total_net,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[id,b.periodBS,b.startDate,b.endDate,totals.basic,totals.allowances,totals.overtime,totals.deductions,totals.advance,totals.net,req.authUser.id]);
+      const run=await client.query(`INSERT INTO payroll_runs(organization_id,period_bs,period_start,period_end,total_basic,total_allowances,total_overtime,total_deductions,total_advance,total_net,total_other_earnings,total_tax,created_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[id,b.periodBS,b.startDate,b.endDate,totals.basic,totals.allowances,totals.overtime,totals.deductions,totals.advance,totals.net,totals.otherEarnings,totals.tax,req.authUser.id]);
       for(const x of items){
-        await client.query(`INSERT INTO payroll_items(payroll_run_id,organization_id,staff_id,basic_salary,allowances,overtime_amount,absent_deduction,advance_deduction,net_salary) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[run.rows[0].id,id,x.staffId,x.basic,x.allow,x.overtimeAmount,x.absentDeduction,x.advanceDeduction,x.net]);
-        let remaining=x.advanceDeduction;for(const aid of x.advanceIds){if(remaining<=0)break;const adv=await client.query('SELECT amount,recovered_amount FROM payroll_advances WHERE id=$1 FOR UPDATE',[aid]);const used=Math.min(remaining,money(adv.rows[0].amount)-money(adv.rows[0].recovered_amount));await client.query("UPDATE payroll_advances SET recovered_amount=recovered_amount+$2,status=CASE WHEN recovered_amount+$2>=amount THEN 'closed' ELSE 'open' END WHERE id=$1",[aid,used]);remaining-=used;}
+        await client.query(`INSERT INTO payroll_items(payroll_run_id,organization_id,staff_id,basic_salary,allowances,overtime_amount,absent_deduction,other_deductions,advance_deduction,net_salary,other_earnings,tax_deduction,salary_breakdown)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)`,[run.rows[0].id,id,x.staffId,x.basic,x.allow,x.overtimeAmount,x.absentDeduction,x.otherDeductions,x.advanceDeduction,x.net,x.otherEarnings,x.taxDeduction,JSON.stringify(x.breakdown)]);
+        let remaining=x.advanceDeduction;
+        for(const aid of x.advanceIds){if(remaining<=0)break;const adv=await client.query('SELECT amount,recovered_amount FROM payroll_advances WHERE id=$1 FOR UPDATE',[aid]);const used=Math.min(remaining,money(adv.rows[0].amount)-money(adv.rows[0].recovered_amount));await client.query("UPDATE payroll_advances SET recovered_amount=recovered_amount+$2,status=CASE WHEN recovered_amount+$2>=amount THEN 'closed' ELSE 'open' END WHERE id=$1",[aid,used]);remaining-=used;}
       }
       await client.query('COMMIT');res.status(201).json({run:run.rows[0],items:items.length});
     }catch(e){await client.query('ROLLBACK');console.error('Payroll generation:',e);res.status(500).json({message:'Payroll generate गर्न सकिएन।'});}
