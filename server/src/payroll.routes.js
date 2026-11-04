@@ -105,7 +105,7 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   });
   router.post('/runs',async(req,res)=>{
     const b=req.body||{};
-    if(!/^\\d{4}-\\d{2}$/.test(String(b.periodBS||''))||!b.startDate||!b.endDate||b.startDate>b.endDate)return res.status(400).json({message:'वि.सं. महिना र सुरु/अन्त्य मिति सही राख्नुहोस्।'});
+    if(!/^\d{4}-\d{2}$/.test(String(b.periodBS||''))||!b.startDate||!b.endDate||b.startDate>b.endDate)return res.status(400).json({message:'वि.सं. महिना र सुरु/अन्त्य मिति सही राख्नुहोस्।'});
     const client=await pool.connect();
     try{
       await client.query('BEGIN');const id=orgId(req);
