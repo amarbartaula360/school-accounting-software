@@ -19,8 +19,7 @@ const projects = [
     category: 'Accounting',
     description: 'विद्यालय तथा संस्थाको आम्दानी, खर्च, भौचर, बैंक र वित्तीय प्रतिवेदन व्यवस्थापनका लागि तयार गरिएको प्रणाली।',
     status: 'Part of School Management System',
-    icon: Database,
-    href: 'https://github.com/amarbartaula360/school-accounting-software'
+    icon: Database
   },
   {
     title: 'UEBS Fee Reminder System',
