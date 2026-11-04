@@ -208,7 +208,7 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   router.post('/device/test-connection',async(req,res)=>{
     const ip=String(req.body?.ip||'').trim();
     const port=Number(req.body?.port||4370);
-    const validIp=/^(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)$/.test(ip);
+    const validIp=/^(?:(?:25[0-5]|2[0-4]\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)$/.test(ip);
     if(!validIp||!Number.isInteger(port)||port<1||port>65535)return res.status(400).json({ok:false,message:'IP Address वा TCP Port सही राख्नुहोस्।'});
     const socket=new net.Socket();let settled=false;
     const finish=(status,payload)=>{if(settled)return;settled=true;socket.destroy();res.status(status).json(payload);};
