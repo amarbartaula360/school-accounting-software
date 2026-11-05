@@ -300,6 +300,25 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
     finally{client.release();}
   });
 
+  router.get('/staff/:id/ledger',async(req,res)=>{
+    try{
+      const id=orgId(req),staffId=Number(req.params.id);
+      if(!Number.isInteger(staffId)||staffId<=0)return res.status(400).json({message:'कर्मचारी ID सही छैन।'});
+      const [staff,payroll,advances]=await Promise.all([
+        pool.query('SELECT id,employee_code,full_name,designation,bank_name,bank_account_name,bank_account_number FROM payroll_staff WHERE organization_id=$1 AND id=$2',[id,staffId]),
+        pool.query(`SELECT pr.id AS payroll_run_id,pr.period_bs,pr.period_start,pr.period_end,
+          pi.basic_salary,pi.allowances,pi.overtime_amount,pi.absent_deduction,pi.other_deductions,
+          pi.other_earnings,pi.tax_deduction,pi.advance_deduction,pi.net_salary,
+          pi.paid_amount,pi.payment_reference,pi.paid_at
+          FROM payroll_items pi JOIN payroll_runs pr ON pr.id=pi.payroll_run_id
+          WHERE pi.organization_id=$1 AND pi.staff_id=$2 ORDER BY pr.period_start DESC`,[id,staffId]),
+        pool.query(`SELECT id,advance_date,advance_type,description,amount,recovered_amount,status
+          FROM payroll_advances WHERE organization_id=$1 AND staff_id=$2 ORDER BY advance_date DESC,id DESC`,[id,staffId])
+      ]);
+      if(!staff.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});
+      res.json({staff:staff.rows[0],payroll:payroll.rows,advances:advances.rows});
+    }catch(e){console.error('Staff ledger:',e);res.status(500).json({message:'कर्मचारी Ledger तयार भएन।'});}
+  });
   router.get('/reports',async(req,res)=>{
     try{const id=orgId(req);const r=await pool.query(`SELECT pr.id,pr.period_bs,pr.period_start,pr.period_end,pr.total_basic,pr.total_allowances,pr.total_overtime,pr.total_deductions,pr.total_advance,pr.total_net,COUNT(pi.id)::int AS staff_count,COALESCE(SUM(pi.paid_amount),0) AS paid_amount FROM payroll_runs pr LEFT JOIN payroll_items pi ON pi.payroll_run_id=pr.id WHERE pr.organization_id=$1 GROUP BY pr.id ORDER BY pr.period_start DESC`,[id]);res.json(r.rows);}
     catch(e){res.status(500).json({message:'Payroll report load भएन।'});}
