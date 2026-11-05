@@ -3137,7 +3137,7 @@ function Placeholder({ title, setActive }) {
 }
 
 export default function App() {
-  const [showPortfolio, setShowPortfolio] = useState(true);
+  const [showPortfolio, setShowPortfolio] = useState(false);
   const [user, setUser] = useState(null);
   const [active, setActive] = useState('Dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
