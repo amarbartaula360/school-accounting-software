@@ -260,7 +260,7 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   // Detailed employee payroll register with bank-transfer details.
   router.get('/runs/:id/items',async(req,res)=>{
     try{
-      const r=await pool.query(`SELECT pi.*,s.employee_code,s.full_name,s.designation,s.bank_name,s.bank_account_name,s.bank_account_number
+      const r=await pool.query(`SELECT pi.*,pr.period_bs,s.employee_code,s.full_name,s.designation,s.bank_name,s.bank_account_name,s.bank_account_number
         FROM payroll_items pi JOIN payroll_staff s ON s.id=pi.staff_id
         JOIN payroll_runs pr ON pr.id=pi.payroll_run_id
         WHERE pi.organization_id=$1 AND pi.payroll_run_id=$2 ORDER BY s.full_name`,[orgId(req),req.params.id]);
@@ -309,11 +309,11 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
         pool.query('SELECT id,employee_code,full_name,designation,phone,email,address,join_date,bank_name,bank_account_name,bank_account_number,pan_number FROM payroll_staff WHERE organization_id=$1 AND id=$2',[id,staffId]),
         pool.query(`SELECT pr.id AS payroll_run_id,pr.period_bs,pr.period_start,pr.period_end,
           pi.basic_salary,pi.allowances,pi.overtime_amount,pi.absent_deduction,pi.other_deductions,
-          pi.other_earnings,pi.tax_deduction,pi.advance_deduction,pi.net_salary,
+          pi.other_earnings,pi.tax_deduction,pi.advance_deduction,pi.net_salary,pi.salary_breakdown,
           pi.paid_amount,pi.payment_reference,pi.paid_at
           FROM payroll_items pi JOIN payroll_runs pr ON pr.id=pi.payroll_run_id
           WHERE pi.organization_id=$1 AND pi.staff_id=$2 ORDER BY pr.period_start DESC`,[id,staffId]),
-        pool.query(`SELECT id,advance_date,advance_type,description,amount,recovered_amount,status
+        pool.query(`SELECT id,advance_date,start_period_bs,advance_type,description,amount,recovered_amount,status
           FROM payroll_advances WHERE organization_id=$1 AND staff_id=$2 ORDER BY advance_date DESC,id DESC`,[id,staffId])
       ]);
       if(!staff.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});
