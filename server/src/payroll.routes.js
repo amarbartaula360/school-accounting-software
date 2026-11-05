@@ -306,7 +306,7 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
       const id=orgId(req),staffId=Number(req.params.id);
       if(!Number.isInteger(staffId)||staffId<=0)return res.status(400).json({message:'कर्मचारी ID सही छैन।'});
       const [staff,payroll,advances]=await Promise.all([
-        pool.query('SELECT id,employee_code,full_name,designation,bank_name,bank_account_name,bank_account_number FROM payroll_staff WHERE organization_id=$1 AND id=$2',[id,staffId]),
+        pool.query('SELECT id,employee_code,full_name,designation,phone,email,address,join_date,bank_name,bank_account_name,bank_account_number,pan_number FROM payroll_staff WHERE organization_id=$1 AND id=$2',[id,staffId]),
         pool.query(`SELECT pr.id AS payroll_run_id,pr.period_bs,pr.period_start,pr.period_end,
           pi.basic_salary,pi.allowances,pi.overtime_amount,pi.absent_deduction,pi.other_deductions,
           pi.other_earnings,pi.tax_deduction,pi.advance_deduction,pi.net_salary,
