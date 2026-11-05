@@ -47,12 +47,13 @@ export function registerPayrollRoutes(app, pool, requireAuth) {
   });
   router.put('/staff/:id',async(req,res)=>{
     const b=req.body||{};
+    if(!b.employeeCode||!b.fullName)return res.status(400).json({message:'कर्मचारी कोड र नाम आवश्यक छ।'});
     try{
-      const r=await pool.query(`UPDATE payroll_staff SET full_name=COALESCE($3,full_name),photo_url=$4,designation=$5,department=$6,phone=$7,email=$8,address=$9,join_date=$10,employment_type=$11,basic_salary=$12,allowances=$13,bank_name=$14,bank_account_name=$15,bank_account_number=$16,pan_number=$17,device_user_id=$18,is_active=$19,updated_at=NOW()
+      const r=await pool.query(`UPDATE payroll_staff SET employee_code=$3,full_name=$4,photo_url=$5,designation=$6,department=$7,phone=$8,email=$9,address=$10,join_date=$11,employment_type=$12,basic_salary=$13,allowances=$14,bank_name=$15,bank_account_name=$16,bank_account_number=$17,pan_number=$18,device_user_id=$19,is_active=$20,updated_at=NOW()
       WHERE organization_id=$1 AND id=$2 RETURNING *`,
-      [orgId(req),req.params.id,b.fullName||null,b.photoUrl||null,b.designation||null,b.department||null,b.phone||null,b.email||null,b.address||null,b.joinDate||null,b.employmentType||'permanent',money(b.basicSalary),money(b.allowances),b.bankName||null,b.bankAccountName||null,b.bankAccountNumber||null,b.panNumber||null,b.deviceUserId||null,b.isActive!==false]);
+      [orgId(req),req.params.id,String(b.employeeCode).trim(),String(b.fullName).trim(),b.photoUrl||null,b.designation||null,b.department||null,b.phone||null,b.email||null,b.address||null,b.joinDate||null,b.employmentType||'permanent',money(b.basicSalary),money(b.allowances),b.bankName||null,b.bankAccountName||null,b.bankAccountNumber||null,b.panNumber||null,b.deviceUserId||null,b.isActive!==false]);
       if(!r.rowCount)return res.status(404).json({message:'कर्मचारी भेटिएन।'});res.json(r.rows[0]);
-    }catch(e){res.status(500).json({message:'कर्मचारी विवरण update भएन।'});}
+    }catch(e){res.status(e.code==='23505'?409:500).json({message:e.code==='23505'?'यो कर्मचारी कोड अर्को कर्मचारीले प्रयोग गरिरहेको छ।':'कर्मचारी विवरण update भएन।'});}
   });
 
   router.get('/attendance',async(req,res)=>{
