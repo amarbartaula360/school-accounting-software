@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import NepaliDate from 'nepali-date-converter';
+import * as XLSX from 'xlsx';
 import {
   Activity, Archive, BadgeCheck, BookOpen, CalendarDays, CheckCircle2,
   ClipboardCheck, Download, FileBadge, FileCheck2, FileClock, FileText,
@@ -8,7 +9,7 @@ import {
 } from 'lucide-react';
 
 const GRADES = [4, 5, 6, 7, 8, 9, 10];
-const BS_MONTHS = ['वैशाख', 'जेठ', 'असार', 'साउन', 'भदौ', 'असोज', 'कात्तिक', 'मंसिर', 'पुस', 'माघ', 'फागुन', 'चैत'];
+const BS_MONTHS = ['Baisakh', 'Jestha', 'Ashadh', 'Shrawan', 'Bhadra', 'Ashwin', 'Kartik', 'Mangsir', 'Poush', 'Magh', 'Falgun', 'Chaitra'];
 const TYPES = ['written', 'internal', 'practical', 'project', 'continuous', 'presentation', 'portfolio', 'oral', 'other'];
 const ROLE_LABELS = { admin: 'Administrator', principal: 'Principal', exam_coordinator: 'Exam Coordinator', teacher: 'Teacher' };
 
@@ -167,6 +168,8 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const [markValues, setMarkValues] = useState({});
   const [absentValues, setAbsentValues] = useState({});
   const [noteValues, setNoteValues] = useState({});
+  const [marksImportPreview, setMarksImportPreview] = useState([]);
+  const [marksImportErrors, setMarksImportErrors] = useState([]);
 
   const [yearForm, setYearForm] = useState({ yearName: '2083/084', startDateBs: '2083-01-01', endDateBs: '2083-12-30' });
   const [subjectForm, setSubjectForm] = useState({ grade: 4, subjectCode: '', nameEn: '', nameNe: '', isPractical: false });
@@ -386,7 +389,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
     await refreshDetails(selectedExamId);
   }, lang === 'ne' ? 'परीक्षा तालिका सुरक्षित भयो।' : 'Examination schedule saved.', false); };
 
-  const changeExamStatus = (status) => run(async () => { await api(`/api/exams/${selectedExamId}/status`, { method: 'POST', body: { status } }); await refreshDetails(selectedExamId); }, lang === 'ne' ? 'परीक्षा स्थिति परिवर्तन भयो।' : 'Exam status updated.', false);
+  const changeExamStatus = (status) => run(async () => { await api(`/api/exams/${selectedExamId}/status`, { method: 'POST', body: { status } }); await refreshDetails(selectedExamId); }, 'Exam status updated.', false);
 
   const saveMarks = () => run(async () => {
     if (!selectedExamId || !selectedComponent) throw new Error('Select an exam and assessment component.');
@@ -401,6 +404,97 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
     await api(`/api/exams/${selectedExamId}/marks`, { method: 'POST', body: { marks: payload } });
     setMarkValues({}); setAbsentValues({}); setNoteValues({}); await refreshDetails(selectedExamId);
   }, lang === 'ne' ? 'अङ्क सुरक्षित भयो।' : 'Marks saved.', false);
+
+  const downloadMarksTemplate = () => {
+    if (!selectedExam || !selectedComponent) return;
+    const rows = (details?.students || []).map(st => ({
+      StudentID: st.id,
+      RollNumber: st.roll_number || '',
+      RegistrationNumber: st.reg_no || st.admission_no || '',
+      StudentName: st.student_name,
+      MarksObtained: '',
+      Status: 'Present',
+      TeacherNote: ''
+    }));
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    sheet['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 20 }, { wch: 28 }, { wch: 16 }, { wch: 14 }, { wch: 30 }];
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Marks Entry');
+    XLSX.writeFile(book, `marks-template-exam-${selectedExam.id}-component-${selectedComponent.id}.xlsx`);
+  };
+
+  const exportMarksToExcel = () => {
+    if (!selectedExam || !selectedComponent) return;
+    const rows = (details?.students || []).map(st => {
+      const mark = existingMark(selectedComponent.id, st.id);
+      return {
+        StudentID: st.id,
+        RollNumber: st.roll_number || '',
+        RegistrationNumber: st.reg_no || st.admission_no || '',
+        StudentName: st.student_name,
+        MaximumMarks: selectedComponent.max_marks ?? '',
+        MarksObtained: mark?.marks_obtained ?? '',
+        Status: mark?.is_absent ? 'Absent' : mark ? 'Present' : 'Pending',
+        TeacherNote: mark?.teacher_note || ''
+      };
+    });
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(rows), 'Marks');
+    XLSX.writeFile(book, `marks-export-exam-${selectedExam.id}-component-${selectedComponent.id}.xlsx`);
+  };
+
+  const previewMarksImport = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    setMarksImportPreview([]);
+    setMarksImportErrors([]);
+    if (!file || !selectedComponent) return;
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+      const errors = [];
+      const seen = new Set();
+      const preview = [];
+      const studentsById = new Map((details?.students || []).map(s => [String(s.id), s]));
+      const studentsByRoll = new Map((details?.students || []).map(s => [String(s.roll_number || '').trim().toLowerCase(), s]).filter(([k]) => k));
+      const studentsByReg = new Map((details?.students || []).map(s => [String(s.reg_no || s.admission_no || '').trim().toLowerCase(), s]).filter(([k]) => k));
+      rows.forEach((row, index) => {
+        const line = index + 2;
+        const id = String(row.StudentID ?? '').trim();
+        const roll = String(row.RollNumber ?? '').trim().toLowerCase();
+        const reg = String(row.RegistrationNumber ?? '').trim().toLowerCase();
+        const student = (id && studentsById.get(id)) || (roll && studentsByRoll.get(roll)) || (reg && studentsByReg.get(reg));
+        if (!student) { errors.push(`Row ${line}: student ID, roll number, or registration number does not match this class.`); return; }
+        if (seen.has(String(student.id))) { errors.push(`Row ${line}: duplicate student entry for ${student.student_name}.`); return; }
+        seen.add(String(student.id));
+        const status = String(row.Status || 'Present').trim().toLowerCase();
+        const absent = status === 'absent';
+        const raw = row.MarksObtained;
+        const mark = raw === '' || raw === null || raw === undefined ? null : Number(raw);
+        if (!['present', 'absent', 'pending'].includes(status)) errors.push(`Row ${line}: Status must be Present, Absent, or Pending.`);
+        else if (absent && mark !== null) errors.push(`Row ${line}: absent students cannot have marks.`);
+        else if (!absent && mark !== null && (!Number.isFinite(mark) || mark < 0 || (selectedComponent.max_marks != null && mark > Number(selectedComponent.max_marks)))) errors.push(`Row ${line}: marks must be between 0 and ${selectedComponent.max_marks ?? 'the configured maximum'}.`);
+        else if (!absent && mark === null && status !== 'pending') errors.push(`Row ${line}: enter marks or select Absent.`);
+        preview.push({ componentId: Number(selectedComponent.id), studentId: Number(student.id), marksObtained: absent ? null : mark, isAbsent: absent, status: absent ? 'Absent' : status === 'pending' ? 'Pending' : 'Present', teacherNote: String(row.TeacherNote || '').trim(), studentName: student.student_name, rollNumber: student.roll_number || '' });
+      });
+      if (!rows.length) errors.push('The selected worksheet contains no student rows.');
+      setMarksImportPreview(preview);
+      setMarksImportErrors(errors);
+    } catch (err) {
+      setMarksImportErrors([`Could not read the Excel file: ${err.message}`]);
+    }
+  };
+
+  const confirmMarksImport = () => run(async () => {
+    if (!selectedExamId || !selectedComponent || !marksImportPreview.length || marksImportErrors.length) throw new Error('Resolve all import errors before saving.');
+    const payload = marksImportPreview.filter(m => m.marksObtained !== null || m.isAbsent || m.teacherNote).map(({ studentName, rollNumber, ...m }) => m);
+    if (!payload.length) throw new Error('No marks to import.');
+    await api(`/api/exams/${selectedExamId}/marks`, { method: 'POST', body: { marks: payload } });
+    setMarksImportPreview([]);
+    setMarksImportErrors([]);
+    await refreshDetails(selectedExamId);
+  }, 'Excel marks imported successfully.', false);
 
   const saveCompetency = (e) => { e.preventDefault(); run(async () => {
     if (!selectedExamId || !selectedStudentId || !competencyResultForm.subjectId || !competencyResultForm.competencyId) throw new Error('Select an exam, student, subject, and learning outcome.');
@@ -723,12 +817,17 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
       </div>}
 
       {tab === 'dashboard' && <>
-        <div className="ex-kpis">
-          <div className="ex-kpi"><span>{t('activeStudents')}</span><strong>{summary.activeStudents ?? '—'}</strong><small>Existing student records · Grades 4–10</small></div>
-          <div className="ex-kpi"><span>{t('academicYears')}</span><strong>{summary.academicYears ?? years.length}</strong><small>{years.find(y => y.is_active)?.year_name || (lang === 'ne' ? 'सक्रिय सत्र छैन' : 'No active year')}</small></div>
-          <div className="ex-kpi"><span>{t('totalExams')}</span><strong>{Object.values(summary.exams || {}).reduce((s,n) => s + Number(n), 0)}</strong><small>{lang === 'ne' ? 'सबै स्थिति' : 'All statuses'}</small></div>
-          <div className="ex-kpi"><span>{t('published')}</span><strong>{summary.exams?.published || 0}</strong><small>{lang === 'ne' ? 'प्रकाशित नतिजा मात्र' : 'Published only'}</small></div>
-          <div className="ex-kpi"><span>{t('verifiedRules')}</span><strong>{summary.verifiedGradingRules ?? 0}</strong><small>{lang === 'ne' ? 'नियम/दफा प्रमाणित' : 'Verified grading bands'}</small></div>
+        <div className="ex-kpis" style={{gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))'}}>
+          <div className="ex-kpi"><span>Total Examinations</span><strong>{summary.totalExams ?? Object.values(summary.exams || {}).reduce((n,v)=>n+Number(v),0)}</strong><small>All examination statuses</small></div>
+          <div className="ex-kpi"><span>Total Students</span><strong>{summary.activeStudents ?? 0}</strong><small>Active students · Grades 4–10</small></div>
+          <div className="ex-kpi"><span>Marks Entry Completed</span><strong>{summary.marksEntryCompleted ?? 0}</strong><small>Student and component records</small></div>
+          <div className="ex-kpi"><span>Marks Entry Pending</span><strong>{summary.marksEntryPending ?? 0}</strong><small>Entries still required</small></div>
+          <div className="ex-kpi"><span>Results Published</span><strong>{summary.exams?.published || 0}</strong><small>Published examinations</small></div>
+          <div className="ex-kpi"><span>Upcoming Examinations</span><strong>{summary.upcomingExams?.length ?? 0}</strong><small>Scheduled from today</small></div>
+        </div>
+        <div className="ex-panel" style={{marginBottom:16}}>
+          <div className="ex-panel-head"><div><h2>Marks Entry Progress</h2><p>Completion across active, unpublished examinations</p></div><strong>{summary.marksEntryProgress ?? 0}%</strong></div>
+          <div style={{height:10,background:'#edf1f7',borderRadius:99,overflow:'hidden'}}><div style={{height:'100%',width:`${Math.max(0,Math.min(100,Number(summary.marksEntryProgress||0)))}%`,background:'#3157c8',borderRadius:99,transition:'width .2s'}} /></div>
         </div>
         {panel(lang === 'ne' ? 'परीक्षा सञ्चालन सुरु गर्नुहोस्' : 'Start an Examination', lang === 'ne' ? 'काम गर्ने क्रमअनुसार एउटा चरण छान्नुहोस्।' : 'Choose the next step in the order you work.', <div className="ex-quick-grid">
           {[
@@ -738,6 +837,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
             ['reports', FileBadge, lang === 'ne' ? '४. नतिजा निकाल्नुहोस्' : '4. View Results', lang === 'ne' ? 'नतिजा जाँच्नुहोस् र मार्कसिट प्रिन्ट गर्नुहोस्।' : 'Review results and print marksheets.']
           ].map(([id, Icon, title, description]) => <button type="button" className="ex-quick-card" key={id} onClick={() => setTab(id)}><span className="ex-quick-icon"><Icon size={19}/></span><strong>{title}</strong><small>{description}</small><span className="ex-quick-link">{lang === 'ne' ? 'यहाँ क्लिक गर्नुहोस् →' : 'Continue →'}</span></button>)}
         </div>)}
+        {panel('Upcoming Examinations', 'The next scheduled examinations in your school.', <div className="ex-list">{(summary.upcomingExams||[]).map(e=><div className="ex-list-item" key={e.id}><div><strong>{e.exam_name_en}</strong><small>Grade {e.grade} · {e.exam_date_bs || toBS(e.exam_date) || 'Date not set'} · {statusLabel(e.status,lang)}</small></div>{actionBtn('Open Exam',()=>{setSelectedExamId(String(e.id));setTab('exams');},'secondary')}</div>)}{!(summary.upcomingExams||[]).length&&<p className="ex-empty">No upcoming examinations are scheduled.</p>}</div>)}
         {panel(t('exams'), lang === 'ne' ? 'कक्षा ४–५ मा competency-first; ६–८ मा configurable subject-wise assessment; ९–१० मा formal marksheet template।' : 'Competency-first for 4–5; configurable subject assessment for 6–8; formal marksheet template for 9–10.', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('examInfo')}</th><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('model')}</th><th>{t('examStatus')}</th><th /></tr></thead><tbody>{displayExams.map(e => <tr key={e.id}><td><b>{lang === 'ne' ? e.exam_name_ne : e.exam_name_en}</b><small>{e.exam_date_bs || toBS(e.exam_date) || '—'}</small></td><td>{e.grade}</td><td>{e.year_name}</td><td>{gradeModelLabel(e.assessment_model,lang)}</td><td>{statusBadge(e.status)}</td><td>{actionBtn(t('chooseExam'), () => { setSelectedExamId(String(e.id)); setTab('exams'); })}</td></tr>)}{!displayExams.length && <tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
         {panel(t('officialRules'), t('sourceWarning'), <div className="ex-list"><div><a className="ex-link" href="https://moecdc.gov.np/content/647/letter-grading-directory--2083/" target="_blank" rel="noreferrer">CDC — Letter Grading Directive, 2083</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/646/guide-to-student-assessment-in-basic-level/" target="_blank" rel="noreferrer">CDC — Student Assessment Guide for Grades 4–5, 2083</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/608/facilitation-manual-for-conducting-projects-and-experiments/" target="_blank" rel="noreferrer">CDC — Internal Assessment, Projects and Practical Work, 2082 (Grades 4–8)</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/21/internal-assessment-standards-for-student-legacy--2080/" target="_blank" rel="noreferrer">CDC — Internal Assessment Standards for Student Learning, 2080 (Grades 9–12)</a></div><div><a className="ex-link" href="https://www.cehrd.gov.np/content/13339/13339-student-assessment_trm_g4-5/" target="_blank" rel="noreferrer">CEHRD — Student Assessment Resource Material for Grades 4–5</a></div></div>)}
       </>}
@@ -861,6 +961,20 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
               {field(t('selectComponent'),select(selectedComponentId,v=>setSelectedComponentId(v),components.map(c=>({value:c.id,label:`${lang==='ne'?c.name_ne:c.name_en} · ${c.max_marks??t('notConfigured')}`}))))}
               <div className="ex-muted" style={{alignSelf:'end'}}>{t('roster')}: {details?.students?.length||0}</div>
             </div>
+            {selectedComponent&&<div className="ex-actions" style={{marginTop:12}}>
+              {actionBtn('Download Excel Template',downloadMarksTemplate,'secondary',!editable,<Download size={15}/>)}
+              {actionBtn('Export Marks to Excel',exportMarksToExcel,'secondary',false,<FileText size={15}/>)}
+              <label className="ex-btn ex-btn-secondary" style={{display:'inline-flex',alignItems:'center',gap:8,cursor:editable?'pointer':'not-allowed',opacity:editable?1:.55}}>
+                <FileCheck2 size={15}/> Import Excel
+                <input type="file" accept=".xlsx,.xls,.csv" disabled={!editable} onChange={previewMarksImport} style={{display:'none'}}/>
+              </label>
+            </div>}
+            {marksImportErrors.length>0&&<div className="ex-alert ex-alert-error" role="alert"><strong>Import validation errors</strong><ul>{marksImportErrors.map((e,i)=><li key={i}>{e}</li>)}</ul></div>}
+            {marksImportPreview.length>0&&<div className="ex-panel" style={{marginTop:12}}>
+              <div className="ex-panel-head"><div><h3>Import Preview</h3><p>{marksImportPreview.length} matched student rows. Review before saving.</p></div></div>
+              <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>Roll</th><th>Student</th><th>Marks</th><th>Status</th></tr></thead><tbody>{marksImportPreview.map((m,i)=><tr key={m.studentId}><td>{m.rollNumber||'—'}</td><td>{m.studentName}</td><td>{m.marksObtained??'—'}</td><td>{m.status}</td></tr>)}</tbody></table></div>
+              <div className="ex-actions">{actionBtn('Cancel Import',()=>{setMarksImportPreview([]);setMarksImportErrors([]);},'secondary')}{actionBtn('Confirm and Save Import',confirmMarksImport,'primary',marksImportErrors.length>0)}</div>
+            </div>}
             {selectedComponent&&<><p className="ex-hint">{selectedComponent.max_marks==null?(lang==='ne'?'यो descriptive component हो; अङ्क होइन, शिक्षक टिप्पणी राख्नुहोस्।':'Descriptive component; enter teacher notes instead of marks.'): `${t('maxMarks')}: ${selectedComponent.max_marks}`}</p>
               <div className="ex-table-wrap" style={{marginTop:12}}><table className="ex-table"><thead><tr><th>Reg No / Roll</th><th>{t('student')}</th><th>{t('marksObtained')}</th><th>{t('absent')}</th><th>{t('note')}</th></tr></thead><tbody>{(details?.students||[]).map(st=>{const key=`${selectedComponent.id}:${st.id}`, prev=existingMark(selectedComponent.id,st.id);return <tr key={st.id}><td>{st.reg_no||st.admission_no}<small>{st.roll_number}</small></td><td>{st.student_name}<small>{st.guardian_name||'—'} · {st.guardian_phone||'—'}</small></td><td><input className="ex-input ex-mark-input" type="number" step="0.01" min="0" max={selectedComponent.max_marks||undefined} disabled={!editable||selectedComponent.max_marks==null||(absentValues[key]??prev?.is_absent)} value={markValues[key] ?? (prev?.marks_obtained??'')} onChange={e=>setMarkValues(v=>({...v,[key]:e.target.value}))}/></td><td><input className="ex-tick" type="checkbox" disabled={!editable} checked={absentValues[key]??Boolean(prev?.is_absent)} onChange={e=>setAbsentValues(v=>({...v,[key]:e.target.checked}))}/></td><td><input className="ex-input" disabled={!editable} value={noteValues[key]??prev?.teacher_note??''} onChange={e=>setNoteValues(v=>({...v,[key]:e.target.value}))}/></td></tr>})}{!details?.students?.length&&<tr><td colSpan="5" className="ex-empty">{t('noStudents')}</td></tr>}</tbody></table></div>
               <div className="ex-actions">{submitBtn(t('saveMarks'))}</div></>}

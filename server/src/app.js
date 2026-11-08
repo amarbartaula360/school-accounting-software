@@ -1904,7 +1904,7 @@ async function examRoleGuard(req, res, next) {
       [Number(organizationId), email]
     );
     if (!roleResult.rowCount) {
-      return res.status(403).json({ message: 'Examination module access छैन। Admin ले तपाईंको email मा role assign गर्नुपर्छ।' });
+      return res.status(403).json({ message: 'You do not have Examination access. Ask an administrator to assign a role to your account.' });
     }
     const role = roleResult.rows[0].role;
     const path = req.path;
@@ -1918,7 +1918,7 @@ async function examRoleGuard(req, res, next) {
     else if (req.method === 'GET') allowed = ['admin', 'principal', 'exam_coordinator', 'teacher'];
     else allowed = ['admin', 'exam_coordinator'];
     if (!allowed.includes(role)) {
-      return res.status(403).json({ message: `यो कार्यका लागि अनुमति छैन। Assigned role: ${role}` });
+      return res.status(403).json({ message: `You are not authorized to perform this action. Assigned role: ${role}` });
     }
     req.examActor = { email, role, organizationId: Number(organizationId) };
     return next();
@@ -2058,14 +2058,60 @@ app.use('/api/exams', examRoleGuard);
 app.get('/api/exams/summary', async (req, res) => {
   try {
     const orgId = req.examActor.organizationId;
-    const [exams, studentCount, yearCount, rulesCount] = await Promise.all([
+    const [exams, studentCount, yearCount, rulesCount, marksProgress, upcoming] = await Promise.all([
       pool.query(`SELECT status, COUNT(*)::int AS count FROM public.exam_exams WHERE organization_id=$1 GROUP BY status`, [orgId]),
       pool.query(`SELECT COUNT(*)::int AS count FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND (${studentGradeSql('class_name')}) BETWEEN 4 AND 10`, [orgId]),
       pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_academic_years WHERE organization_id=$1`, [orgId]),
-      pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE AND is_verified=TRUE`, [orgId])
+      pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE AND is_verified=TRUE`, [orgId]),
+      pool.query(
+        `WITH expected AS (
+            SELECT e.id AS exam_id, COUNT(DISTINCT s.id) * COUNT(DISTINCT c.id) AS expected_count
+            FROM public.exam_exams e
+            JOIN public.fee_students s ON s.organization_id=e.organization_id AND s.is_active=TRUE
+              AND (${studentGradeSql('s.class_name')})=e.grade
+              AND (e.section IS NULL OR LOWER(TRIM(COALESCE(s.section,'')))=LOWER(TRIM(e.section)))
+            JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id
+            JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id
+            WHERE e.organization_id=$1 AND e.status<>'published'
+            GROUP BY e.id
+          ), entered AS (
+            SELECT e.id AS exam_id, COUNT(DISTINCT m.id) AS entered_count
+            FROM public.exam_exams e
+            JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id
+            JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id
+            JOIN public.exam_marks m ON m.component_id=c.id AND m.organization_id=e.organization_id
+            JOIN public.fee_students s ON s.id=m.student_id AND s.organization_id=e.organization_id
+              AND s.is_active=TRUE AND (${studentGradeSql('s.class_name')})=e.grade
+              AND (e.section IS NULL OR LOWER(TRIM(COALESCE(s.section,'')))=LOWER(TRIM(e.section)))
+            WHERE e.organization_id=$1 AND e.status<>'published'
+              AND (m.is_absent=TRUE OR m.marks_obtained IS NOT NULL OR COALESCE(m.teacher_note,'')<>'')
+            GROUP BY e.id
+          )
+          SELECT COALESCE(SUM(expected.expected_count),0)::int AS expected,
+                 COALESCE(SUM(entered.entered_count),0)::int AS entered
+          FROM expected LEFT JOIN entered ON entered.exam_id=expected.exam_id`,
+        [orgId]
+      ),
+      pool.query(
+        `SELECT id, exam_name_en, grade, exam_date, exam_date_bs, status
+         FROM public.exam_exams WHERE organization_id=$1 AND exam_date>=CURRENT_DATE
+           AND status<>'published' ORDER BY exam_date, id LIMIT 6`, [orgId]
+      )
     ]);
     const byStatus = Object.fromEntries(exams.rows.map(r => [r.status, Number(r.count)]));
-    res.json({ exams: byStatus, activeStudents: Number(studentCount.rows[0]?.count || 0), academicYears: Number(yearCount.rows[0]?.count || 0), verifiedGradingRules: Number(rulesCount.rows[0]?.count || 0) });
+    const expected = Number(marksProgress.rows[0]?.expected || 0);
+    const entered = Number(marksProgress.rows[0]?.entered || 0);
+    res.json({
+      exams: byStatus,
+      totalExams: exams.rows.reduce((n, r) => n + Number(r.count), 0),
+      activeStudents: Number(studentCount.rows[0]?.count || 0),
+      academicYears: Number(yearCount.rows[0]?.count || 0),
+      verifiedGradingRules: Number(rulesCount.rows[0]?.count || 0),
+      marksEntryCompleted: entered,
+      marksEntryPending: Math.max(0, expected - entered),
+      marksEntryProgress: expected ? Math.round(entered / expected * 100) : 0,
+      upcomingExams: upcoming.rows
+    });
   } catch (err) { console.error('Exam summary error:', err.message); res.status(500).json({ message: 'Could not load examination dashboard.' }); }
 });
 
@@ -2467,7 +2513,7 @@ app.post('/api/exams/:examId/marks', async (req, res) => {
   try {
     const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
     const marks = req.body?.marks;
-    if (!isValidOrganizationId(examId) || !Array.isArray(marks) || !marks.length || marks.length > 2000) return res.status(400).json({ message: 'Exam ID र 1–2000 marks entries आवश्यक छन्।' });
+    if (!isValidOrganizationId(examId) || !Array.isArray(marks) || !marks.length || marks.length > 2000) return res.status(400).json({ message: 'Exam ID and 1–2000 marks entries are required.' });
     await client.query('BEGIN');
     const examResult = await client.query('SELECT * FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
     if (!examResult.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
@@ -2592,6 +2638,32 @@ app.put('/api/exams/:examId/schedule', async (req, res) => {
     if (!['draft','in_review'].includes(exam.rows[0].status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Approved/locked/published schedule cannot be modified.' }); }
     const subject = await client.query('SELECT id FROM public.exam_exam_subjects WHERE id=$1 AND exam_id=$2 AND organization_id=$3', [subjectId, examId, orgId]);
     if (!subject.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Subject is not part of this exam.' }); }
+    if (startTime && endTime && (roomOrVenue.trim() || invigilator.trim())) {
+      const conflict = await client.query(
+        `SELECT sch.id, sch.room_or_venue, sch.invigilator, sch.start_time, sch.end_time,
+                e.exam_name_en, s.name_en AS subject_name
+         FROM public.exam_assessment_schedule sch
+         JOIN public.exam_exams e ON e.id=sch.exam_id
+         JOIN public.exam_exam_subjects ees ON ees.id=sch.exam_subject_id
+         JOIN public.exam_subjects s ON s.id=ees.subject_id
+         WHERE sch.organization_id=$1
+            AND sch.exam_date=$3::date
+            AND NOT (sch.exam_id=$2 AND sch.exam_subject_id=$8)
+           AND sch.start_time IS NOT NULL AND sch.end_time IS NOT NULL
+           AND sch.start_time < $5::time AND sch.end_time > $4::time
+           AND (
+             ($6<>'' AND LOWER(COALESCE(sch.room_or_venue,''))=LOWER($6))
+             OR ($7<>'' AND LOWER(COALESCE(sch.invigilator,''))=LOWER($7))
+           )
+         LIMIT 1`,
+        [orgId, examId, examDate || null, startTime, endTime, String(roomOrVenue).trim(), String(invigilator).trim(), subjectId]
+      );
+      if (conflict.rowCount) {
+        await client.query('ROLLBACK');
+        const item = conflict.rows[0];
+        return res.status(409).json({ message: `Schedule conflict: ${item.subject_name} in ${item.exam_name_en} already uses the same room or invigilator during this time.` });
+      }
+    }
     const prior = await client.query('SELECT * FROM public.exam_assessment_schedule WHERE exam_id=$1 AND exam_subject_id=$2', [examId, subjectId]);
     const result = await client.query(
       `INSERT INTO public.exam_assessment_schedule (organization_id, exam_id, exam_subject_id, exam_date, exam_date_bs, start_time, end_time, room_or_venue, invigilator, updated_by_email, updated_at)
@@ -2667,9 +2739,44 @@ app.post('/api/exams/:examId/status', async (req, res) => {
     if (!before.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
     const old = before.rows[0];
     if (!transitions[old.status]?.includes(target)) { await client.query('ROLLBACK'); return res.status(409).json({ message: `Status ${old.status} बाट ${target} मा जान मिल्दैन।` }); }
-    if (target === 'in_review') {
-      const component = await client.query('SELECT COUNT(*)::int AS n FROM public.exam_exam_subjects WHERE exam_id=$1', [examId]);
-      if (!component.rows[0].n) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Review मा पठाउनु अघि कम्तीमा एउटा subject configure गर्नुहोस्।' }); }
+    if (target === 'in_review' || target === 'published') {
+      const component = await client.query(
+        `SELECT COUNT(*)::int AS n
+         FROM public.exam_exam_subjects ees
+         JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id
+         WHERE ees.exam_id=$1 AND ees.organization_id=$2 AND c.organization_id=$2`,
+        [examId, orgId]
+      );
+      if (!component.rows[0].n) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: 'Configure at least one subject and assessment component before submitting results.' });
+      }
+      const incomplete = await client.query(
+        `SELECT COUNT(*)::int AS n
+         FROM public.fee_students s
+         JOIN public.exam_exams e ON e.id=$1 AND e.organization_id=s.organization_id
+         JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id
+         JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id
+         LEFT JOIN public.exam_marks m ON m.component_id=c.id AND m.student_id=s.id AND m.organization_id=e.organization_id
+         WHERE s.organization_id=$2 AND s.is_active=TRUE
+           AND (${studentGradeSql('s.class_name')})=e.grade
+           AND (m.id IS NULL OR (c.max_marks IS NOT NULL AND m.marks_obtained IS NULL AND NOT m.is_absent)
+                OR (c.max_marks IS NULL AND COALESCE(m.teacher_note,'')=''))`,
+        [examId, orgId]
+      );
+      if (Number(incomplete.rows[0]?.n || 0) > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: `Cannot submit or publish results: ${incomplete.rows[0].n} student-component entries are incomplete. Enter marks, record absence, or add descriptive assessment notes first.` });
+      }
+      const subjectsWithoutPassRule = await client.query(
+        `SELECT COUNT(*)::int AS n FROM public.exam_exam_subjects
+         WHERE exam_id=$1 AND organization_id=$2 AND (pass_marks IS NULL OR full_marks IS NULL)`,
+        [examId, orgId]
+      );
+      if (target === 'published' && Number(subjectsWithoutPassRule.rows[0]?.n || 0) > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: 'Cannot publish results until Full Marks and Pass Marks are configured for every subject.' });
+      }
     }
     const updated = await client.query(
       `UPDATE public.exam_exams SET status=$3, updated_at=NOW(),
