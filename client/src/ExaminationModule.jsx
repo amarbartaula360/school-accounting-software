@@ -137,6 +137,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const [lang, setLang] = useState('ne');
   const t = (key) => words[lang]?.[key] ?? words.en[key] ?? key;
   const [tab, setTab] = useState('dashboard');
+  const [settingsTab, setSettingsTab] = useState('grading');
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -616,10 +617,13 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   };
 
   const navItems = [
-    ['dashboard', t('dashboard'), <Activity size={16} />], ['years', t('years'), <CalendarDays size={16} />],
-    ['curriculum', t('curriculum'), <BookOpen size={16} />], ['exams', t('exams'), <FileText size={16} />],
-    ['marks', t('marks'), <ClipboardCheck size={16} />], ['reports', t('reports'), <FileBadge size={16} />],
-    ['grading', t('grading'), <Settings2 size={16} />], ['access', t('access'), <ShieldCheck size={16} />]
+    ['dashboard', t('dashboard'), <Activity size={16} />],
+    ['years', t('years'), <CalendarDays size={16} />],
+    ['curriculum', t('curriculum'), <BookOpen size={16} />],
+    ['exams', t('exams'), <FileText size={16} />],
+    ['marks', t('marks'), <ClipboardCheck size={16} />],
+    ['reports', t('reports'), <FileBadge size={16} />],
+    ['settings', lang === 'ne' ? 'सेटिङ' : 'Settings', <Settings2 size={16} />]
   ];
 
   return <div className="exam-module">
@@ -681,8 +685,9 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
         .exam-module .ex-role-callout{background:rgba(255,176,32,.1);border-color:rgba(255,176,32,.28);color:#ffd17b;}
         .exam-module input,.exam-module select,.exam-module textarea{color-scheme:dark;}
       }
-      @media(max-width:1100px){.ex-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.ex-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
-      @media(max-width:700px){.exam-top h1{font-size:21px}.ex-panel,.exam-panel{padding:14px}.ex-grid,.ex-grid-3,.ex-two-col{grid-template-columns:1fr}.ex-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-kpi strong{font-size:21px}.exam-print-meta{grid-template-columns:1fr}}
+      .exam-subtabs{padding-top:0;margin-top:-7px;margin-bottom:16px}.ex-quick-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.ex-quick-card{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;text-align:left;padding:14px;border:1px solid var(--line);border-radius:12px;background:#fff;color:#172033;cursor:pointer;transition:border-color .15s,transform .15s}.ex-quick-card:hover{border-color:#818cf8;transform:translateY(-2px)}.ex-quick-card strong{font-size:12px;line-height:1.5}.ex-quick-card small{font-size:11px;line-height:1.55;color:#667085}.ex-quick-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#eef2ff;color:#4338ca}.ex-quick-link{font-size:11px;font-weight:800;color:#6366f1;margin-top:auto}.exam-module .ex-quick-card{background:linear-gradient(145deg,#141b2c,#0d1422);border-color:#292747;color:#f1f5ff}.exam-module .ex-quick-card small{color:#9aabc8}.exam-module .ex-quick-icon{background:rgba(255,79,163,.13);color:#ff79ba}.exam-module .ex-quick-link{color:#ff79ba}
+      @media(max-width:1100px){.ex-quick-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.ex-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.ex-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:700px){.ex-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.exam-top h1{font-size:21px}.ex-panel,.exam-panel{padding:14px}.ex-grid,.ex-grid-3,.ex-two-col{grid-template-columns:1fr}.ex-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-kpi strong{font-size:21px}.exam-print-meta{grid-template-columns:1fr}}
       @page{size:A4 portrait;margin:10mm}
       @media print{body *{visibility:hidden!important}.exam-print-root,.exam-print-root *{visibility:visible!important}.exam-print-root{display:block!important;position:absolute;left:0;top:0;width:100%;background:#fff;color:#111}.exam-print-page{min-height:0;padding:0;margin:0;font-size:10pt;break-after:page;page-break-after:always}.exam-print-page:last-child{break-after:auto;page-break-after:auto}.exam-print-table tr{break-inside:avoid;page-break-inside:avoid}.exam-print-page h1,.exam-print-page h2,.exam-print-page h3,.exam-print-page p,.exam-print-page td,.exam-print-page th{color:#111!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
     `}</style>
@@ -695,7 +700,11 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
       {notice && <div className="ex-alert ex-alert-ok"><CheckCircle2 size={14} style={{ verticalAlign: 'middle', marginRight: 5 }} />{notice}</div>}
       {loading && <div className="ex-alert ex-alert-info">{t('loading')}</div>}
       <div className="exam-top"><p className="ex-subtitle" style={{ maxWidth: 850 }}>{t('officialRules')}<br /><span className="ex-badge">{lang === 'ne' ? 'आधिकारिक नियम कन्फिगर गर्नुपर्ने' : 'Official rules need configuration'}</span></p><button type="button" className="ex-btn ex-btn-secondary" onClick={refreshBase}><RefreshCw size={15} />{t('refresh')}</button></div>
-      <div className="exam-tabs">{navItems.map(([id, label, icon]) => <button type="button" key={id} className={`exam-tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>{icon}{label}</button>)}</div>
+      <div className="exam-tabs" aria-label={lang === 'ne' ? 'परीक्षा मेनु' : 'Examination navigation'}>{navItems.map(([id, label, icon]) => <button type="button" key={id} className={`exam-tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>{icon}{label}</button>)}</div>
+      {tab === 'settings' && <div className="exam-tabs exam-subtabs" aria-label={lang === 'ne' ? 'सेटिङ मेनु' : 'Settings navigation'}>
+        <button type="button" className={`exam-tab ${settingsTab === 'grading' ? 'active' : ''}`} onClick={() => setSettingsTab('grading')}><Settings2 size={15}/>{t('grading')}</button>
+        <button type="button" className={`exam-tab ${settingsTab === 'access' ? 'active' : ''}`} onClick={() => setSettingsTab('access')}><ShieldCheck size={15}/>{t('access')}</button>
+      </div>}
 
       {tab === 'dashboard' && <>
         <div className="ex-kpis">
@@ -705,7 +714,16 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
           <div className="ex-kpi"><span>{t('published')}</span><strong>{summary.exams?.published || 0}</strong><small>{lang === 'ne' ? 'प्रकाशित नतिजा मात्र' : 'Published only'}</small></div>
           <div className="ex-kpi"><span>{t('verifiedRules')}</span><strong>{summary.verifiedGradingRules ?? 0}</strong><small>{lang === 'ne' ? 'नियम/दफा प्रमाणित' : 'Verified grading bands'}</small></div>
         </div>
-        {panel(t('exams'), lang === 'ne' ? 'कक्षा ४–५ मा competency-first; ६–८ मा configurable subject-wise assessment; ९–१० मा formal marksheet template।' : 'Competency-first for 4–5; configurable subject assessment for 6–8; formal marksheet for 9–10.', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('examInfo')}</th><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('model')}</th><th>{t('examStatus')}</th><th /></tr></thead><tbody>{displayExams.map(e => <tr key={e.id}><td><b>{lang === 'ne' ? e.exam_name_ne : e.exam_name_en}</b><small>{e.exam_date_bs || toBS(e.exam_date) || '—'}</small></td><td>{e.grade}</td><td>{e.year_name}</td><td>{gradeModelLabel(e.assessment_model,lang)}</td><td>{statusBadge(e.status)}</td><td>{actionBtn(t('chooseExam'), () => { setSelectedExamId(String(e.id)); setTab('exams'); })}</td></tr>)}{!displayExams.length && <tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
+        {panel(lang === 'ne' ? 'छिटो सुरु गर्नुहोस्' : 'Quick Start', lang === 'ne' ? 'तलका चरणहरू क्रमशः पूरा गर्दा परीक्षा सञ्चालन गर्न सजिलो हुन्छ।' : 'Follow these steps in order to run an examination.', <div className="ex-quick-grid">
+          {[
+            ['years', CalendarDays, lang === 'ne' ? '१. शैक्षिक सत्र' : '1. Academic Year', lang === 'ne' ? 'पहिले चालु शैक्षिक सत्र छान्नुहोस् वा थप्नुहोस्।' : 'Select or add the active academic year.'],
+            ['curriculum', BookOpen, lang === 'ne' ? '२. विषय सूची' : '2. Subjects', lang === 'ne' ? 'कक्षा अनुसार विषय र सिकाइ उपलब्धि मिलाउनुहोस्।' : 'Set up subjects and learning outcomes by grade.'],
+            ['exams', FileText, lang === 'ne' ? '३. परीक्षा सेटअप' : '3. Create Exam', lang === 'ne' ? 'परीक्षा बनाएर विषय र पूर्णाङ्क राख्नुहोस्।' : 'Create an exam and add subjects and marks.'],
+            ['marks', ClipboardCheck, lang === 'ne' ? '४. अङ्क प्रविष्टि' : '4. Enter Marks', lang === 'ne' ? 'विद्यार्थीको प्राप्ताङ्क भरेर सेभ गर्नुहोस्।' : 'Enter and save student marks.'],
+            ['reports', FileBadge, lang === 'ne' ? '५. मार्कसिट' : '5. Marksheet', lang === 'ne' ? 'नतिजा जाँचेर मार्कसिट प्रिन्ट गर्नुहोस्।' : 'Review results and print marksheets.']
+          ].map(([id, Icon, title, description]) => <button type="button" className="ex-quick-card" key={id} onClick={() => setTab(id)}><span className="ex-quick-icon"><Icon size={18}/></span><strong>{title}</strong><small>{description}</small><span className="ex-quick-link">{lang === 'ne' ? 'खोल्नुहोस् →' : 'Open →'}</span></button>)}
+        </div>)}
+        {panel(t('exams'), lang === 'ne' ? 'कक्षा ४–५ मा competency-first; ६–८ मा configurable subject-wise assessment; ९–१० मा formal marksheet template।' : 'Competency-first for 4–5; configurable subject assessment for 6–8; formal marksheet template for 9–10.', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('examInfo')}</th><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('model')}</th><th>{t('examStatus')}</th><th /></tr></thead><tbody>{displayExams.map(e => <tr key={e.id}><td><b>{lang === 'ne' ? e.exam_name_ne : e.exam_name_en}</b><small>{e.exam_date_bs || toBS(e.exam_date) || '—'}</small></td><td>{e.grade}</td><td>{e.year_name}</td><td>{gradeModelLabel(e.assessment_model,lang)}</td><td>{statusBadge(e.status)}</td><td>{actionBtn(t('chooseExam'), () => { setSelectedExamId(String(e.id)); setTab('exams'); })}</td></tr>)}{!displayExams.length && <tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
         {panel(t('officialRules'), t('sourceWarning'), <div className="ex-list"><div><a className="ex-link" href="https://moecdc.gov.np/content/647/letter-grading-directory--2083/" target="_blank" rel="noreferrer">CDC — लेटर ग्रेडिङ निर्देशिका, २०८३</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/646/guide-to-student-assessment-in-basic-level/" target="_blank" rel="noreferrer">CDC — कक्षा ४–५ विद्यार्थी मूल्याङ्कन मार्गदर्शन, २०८३</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/608/facilitation-manual-for-conducting-projects-and-experiments/" target="_blank" rel="noreferrer">CDC — आन्तरिक मूल्याङ्कन, परियोजना तथा प्रयोगात्मक कार्य, २०८२ (कक्षा ४–८)</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/21/internal-assessment-standards-for-student-legacy--2080/" target="_blank" rel="noreferrer">CDC — विद्यार्थी सिकाइका लागि आन्तरिक मूल्याङ्कन मापदण्ड, २०८० (कक्षा ९–१२)</a></div><div><a className="ex-link" href="https://www.cehrd.gov.np/content/13339/13339-student-assessment_trm_g4-5/" target="_blank" rel="noreferrer">CEHRD — कक्षा ४–५ विद्यार्थी मूल्याङ्कन स्रोत सामग्री</a></div></div>)}
       </>}
 
@@ -879,7 +897,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
         </>}
       </>}
 
-      {tab === 'grading' && <>
+      {tab === 'settings' && settingsTab === 'grading' && <>
         <div className="ex-two-col">
           {panel(t('gradingRules'), t('noRules'), <form onSubmit={saveGradeRule} className="ex-grid">
             {field(t('grade'),select(ruleForm.grade,v=>setRuleForm(f=>({...f,grade:Number(v)})),GRADES.map(g=>({value:g,label:String(g)}))))}
@@ -913,7 +931,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
         {panel(t('gpaPolicy'), '', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('gpaMethod')}</th><th>{t('gpaMax')}</th><th>{t('passRule')}</th><th>{t('verified')}</th></tr></thead><tbody>{policies.map(p=><tr key={p.id}><td>{p.grade}</td><td>{years.find(y=>String(y.id)===String(p.academic_year_id))?.year_name||'All / General'}</td><td>{p.gpa_method}</td><td>{p.gpa_max??'—'}</td><td>{p.overall_pass_rule||'—'}<small>{p.promotion_rule||''}</small></td><td>{p.is_verified?'✓':'—'}</td></tr>)}{!policies.length&&<tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
       </>}
 
-      {tab === 'access' && <>
+      {tab === 'settings' && settingsTab === 'access' && <>
         {isAdmin && panel(lang==='ne'?'विद्यालयको विवरण / प्रतिवेदन सेटिङ':'School Identity & Report Settings',lang==='ne'?'मानक मार्कसिट र प्रगति प्रतिवेदनमा देखिने विद्यालयको वास्तविक नाम, ठेगाना, सम्पर्क र लोगो यहाँ सेट गर्नुहोस्।':'Configure the real school identity shown on printed marksheets and progress reports.', <form onSubmit={saveReportSettings} className="ex-grid-3">
           {field(lang==='ne'?'विद्यालयको नाम (English)':'School Name (English)',input(reportSettingsForm.schoolNameEn,v=>setReportSettingsForm(f=>({...f,schoolNameEn:v})),{maxLength:200}))}
           {field(lang==='ne'?'विद्यालयको नाम (नेपाली)':'School Name (Nepali)',input(reportSettingsForm.schoolNameNe,v=>setReportSettingsForm(f=>({...f,schoolNameNe:v})),{maxLength:200}))}
