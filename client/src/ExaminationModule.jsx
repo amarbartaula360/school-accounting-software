@@ -472,11 +472,11 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
         const absent = status === 'absent';
         const raw = row.MarksObtained;
         const mark = raw === '' || raw === null || raw === undefined ? null : Number(raw);
-        if (!['present', 'absent', 'pending'].includes(status)) errors.push(`Row ${line}: Status must be Present or Absent.`);
+        if (!['present', 'absent', 'pending'].includes(status)) errors.push(`Row ${line}: Status must be Present, Absent, or Pending.`);
         else if (absent && mark !== null) errors.push(`Row ${line}: absent students cannot have marks.`);
         else if (!absent && mark !== null && (!Number.isFinite(mark) || mark < 0 || (selectedComponent.max_marks != null && mark > Number(selectedComponent.max_marks)))) errors.push(`Row ${line}: marks must be between 0 and ${selectedComponent.max_marks ?? 'the configured maximum'}.`);
         else if (!absent && mark === null && status !== 'pending') errors.push(`Row ${line}: enter marks or select Absent.`);
-        preview.push({ componentId: Number(selectedComponent.id), studentId: Number(student.id), marksObtained: absent ? null : mark, isAbsent: absent, teacherNote: String(row.TeacherNote || '').trim(), studentName: student.student_name, rollNumber: student.roll_number || '' });
+        preview.push({ componentId: Number(selectedComponent.id), studentId: Number(student.id), marksObtained: absent ? null : mark, isAbsent: absent, status: absent ? 'Absent' : status === 'pending' ? 'Pending' : 'Present', teacherNote: String(row.TeacherNote || '').trim(), studentName: student.student_name, rollNumber: student.roll_number || '' });
       });
       if (!rows.length) errors.push('The selected worksheet contains no student rows.');
       setMarksImportPreview(preview);
@@ -972,7 +972,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
             {marksImportErrors.length>0&&<div className="ex-alert ex-alert-error" role="alert"><strong>Import validation errors</strong><ul>{marksImportErrors.map((e,i)=><li key={i}>{e}</li>)}</ul></div>}
             {marksImportPreview.length>0&&<div className="ex-panel" style={{marginTop:12}}>
               <div className="ex-panel-head"><div><h3>Import Preview</h3><p>{marksImportPreview.length} matched student rows. Review before saving.</p></div></div>
-              <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>Roll</th><th>Student</th><th>Marks</th><th>Status</th></tr></thead><tbody>{marksImportPreview.map((m,i)=><tr key={m.studentId}><td>{m.rollNumber||'—'}</td><td>{m.studentName}</td><td>{m.marksObtained??'—'}</td><td>{m.isAbsent?'Absent':'Present'}</td></tr>)}</tbody></table></div>
+              <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>Roll</th><th>Student</th><th>Marks</th><th>Status</th></tr></thead><tbody>{marksImportPreview.map((m,i)=><tr key={m.studentId}><td>{m.rollNumber||'—'}</td><td>{m.studentName}</td><td>{m.marksObtained??'—'}</td><td>{m.status}</td></tr>)}</tbody></table></div>
               <div className="ex-actions">{actionBtn('Cancel Import',()=>{setMarksImportPreview([]);setMarksImportErrors([]);},'secondary')}{actionBtn('Confirm and Save Import',confirmMarksImport,'primary',marksImportErrors.length>0)}</div>
             </div>}
             {selectedComponent&&<><p className="ex-hint">{selectedComponent.max_marks==null?(lang==='ne'?'यो descriptive component हो; अङ्क होइन, शिक्षक टिप्पणी राख्नुहोस्।':'Descriptive component; enter teacher notes instead of marks.'): `${t('maxMarks')}: ${selectedComponent.max_marks}`}</p>
