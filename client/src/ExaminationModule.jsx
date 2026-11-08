@@ -808,6 +808,52 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
       @media(max-width:700px){.ex-quick-grid{grid-template-columns:1fr}.exam-top h1{font-size:21px}.ex-panel,.exam-panel{padding:14px}.ex-grid,.ex-grid-3,.ex-two-col{grid-template-columns:1fr}.ex-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-kpi strong{font-size:21px}.exam-print-meta{grid-template-columns:1fr}}
       @page{size:A4 portrait;margin:10mm}
       @media print{body *{visibility:hidden!important}.exam-print-root,.exam-print-root *{visibility:visible!important}.exam-print-root{display:block!important;position:absolute;left:0;top:0;width:100%;background:#fff;color:#111}.exam-print-page{min-height:0;padding:0;margin:0;font-size:10pt;break-after:page;page-break-after:always}.exam-print-page:last-child{break-after:auto;page-break-after:auto}.exam-print-table tr{break-inside:avoid;page-break-inside:avoid}.exam-print-page h1,.exam-print-page h2,.exam-print-page h3,.exam-print-page p,.exam-print-page td,.exam-print-page th{color:#111!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+
+      /* Full Examination workspace visual refresh */
+      .exam-module{background:#f3f6fb!important;color:#17243b!important;padding:clamp(12px,2vw,28px)!important;border-radius:22px!important;min-height:100%;--brand:#3158c9;--line:#e4eaf4;--muted:#68758b}
+      .exam-module .exam-ui{max-width:1600px;margin:0 auto}
+      .exam-module .exam-top{align-items:center!important;margin-bottom:18px!important}
+      .exam-module .exam-top:first-child{background:linear-gradient(135deg,#fff,#f7f9ff);border:1px solid #e3e9f4;border-radius:18px;padding:20px 22px;box-shadow:0 5px 22px rgba(23,42,83,.045)}
+      .exam-module .exam-top h1{display:flex;align-items:center;gap:10px;color:#152746!important;font-size:clamp(21px,2.2vw,29px)!important;letter-spacing:-.045em!important}
+      .exam-module .exam-top h1 svg{background:#eaf0ff;color:#3158c9;padding:7px;border-radius:12px;width:38px;height:38px}
+      .exam-module .exam-top p{color:#718097!important}.exam-module .exam-top p b{color:#30415e}
+      .exam-module .exam-top:nth-of-type(2){background:#fff;border:1px solid #e5eaf2;border-radius:14px;padding:13px 16px;align-items:center!important}
+      .exam-module .exam-top:nth-of-type(2) .ex-subtitle{margin:0!important;max-width:100%!important}
+      .exam-module .exam-tabs{display:flex;gap:7px;padding:7px;margin:0 0 18px!important;background:#e9eef7;border:1px solid #e0e7f2;border-radius:15px;overflow-x:auto;scrollbar-width:thin}
+      .exam-module .exam-tab{border:1px solid transparent!important;border-radius:10px!important;background:transparent!important;color:#52627c!important;padding:11px 15px!important;font-size:12px!important;font-weight:750!important;transition:all .18s ease;box-shadow:none!important}
+      .exam-module .exam-tab:hover{background:#fff!important;color:#263f79!important}
+      .exam-module .exam-tab.active{background:#fff!important;color:#254bb2!important;border-color:#dce5fb!important;box-shadow:0 3px 10px rgba(35,67,139,.09)!important}
+      .exam-module .exam-subtabs{background:#fff!important;margin-top:-9px!important;padding:6px!important}
+      .exam-module .ex-panel,.exam-module .exam-panel{border:1px solid #e2e8f2!important;border-radius:17px!important;padding:clamp(15px,1.7vw,23px)!important;box-shadow:0 5px 20px rgba(25,45,82,.045)!important;margin-bottom:17px!important;background:#fff!important}
+      .exam-module .ex-panel-head{align-items:center!important;margin-bottom:17px!important}
+      .exam-module .ex-panel-head h2{font-size:16px!important;letter-spacing:-.02em;color:#1c2d4a!important}
+      .exam-module .ex-panel-head p{color:#7a879b!important}
+      .exam-module .ex-kpis{gap:12px!important;margin-bottom:18px!important}
+      .exam-module .ex-kpi{position:relative;overflow:hidden;border:1px solid #e5eaf3!important;border-radius:15px!important;padding:17px!important;background:linear-gradient(145deg,#fff,#fbfcff)!important;box-shadow:0 4px 14px rgba(25,45,82,.035)!important;transition:transform .18s ease,box-shadow .18s ease}
+      .exam-module .ex-kpi:hover{transform:translateY(-2px);box-shadow:0 9px 22px rgba(25,45,82,.075)!important}
+      .exam-module .ex-kpi:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:#6686df}
+      .exam-module .ex-kpi span{color:#748198!important;font-size:11px!important}.exam-module .ex-kpi strong{color:#1c3155!important;font-size:28px!important;letter-spacing:-.04em;margin-top:9px!important}.exam-module .ex-kpi small{color:#8b96a8!important;font-size:10px!important}
+      .exam-module .ex-quick-grid{gap:11px!important}
+      .exam-module .ex-quick-card{border:1px solid #e4eaf4!important;border-radius:14px!important;background:#fff!important;box-shadow:0 3px 12px rgba(25,45,82,.035)!important;min-height:145px!important;padding:15px!important}
+      .exam-module .ex-quick-card:hover{border-color:#b7c8f4!important;background:#fafdff!important;transform:translateY(-2px)!important;box-shadow:0 9px 20px rgba(49,88,201,.09)!important}
+      .exam-module .ex-quick-icon{width:38px!important;height:38px!important;border-radius:11px!important;background:#edf2ff!important;color:#3158c9!important}
+      .exam-module .ex-quick-card strong{color:#263a5d!important;font-size:13px!important}.exam-module .ex-quick-card small{color:#77849a!important}.exam-module .ex-quick-link{color:#3158c9!important}
+      .exam-module .ex-list{gap:8px!important}.exam-module .ex-list-item{border:1px solid #e7ecf4!important;border-radius:12px!important;padding:13px!important;background:#fff!important}
+      .exam-module .ex-list-item:hover{background:#f9fbff!important;border-color:#d7e1f7!important}.exam-module .ex-list-item strong{color:#293d60!important}
+      .exam-module .ex-badge,.exam-module .ex-data-chip{border:1px solid #e0e7f2!important;background:#f4f7fc!important;color:#536581!important}
+      .exam-module .ex-input{border:1px solid #d9e1ed!important;border-radius:10px!important;background:#fff!important;min-height:43px!important;color:#243550!important;box-shadow:0 1px 2px rgba(20,35,65,.025)}
+      .exam-module textarea.ex-input{min-height:90px!important}.exam-module .ex-input:hover{border-color:#b8c6df!important}.exam-module .ex-input:focus{border-color:#6d8be0!important;outline:3px solid rgba(49,88,201,.12)!important}
+      .exam-module .ex-field{gap:7px!important;color:#3d4d68!important;font-size:12px!important}
+      .exam-module .ex-btn{border-radius:10px!important;min-height:40px!important;padding:10px 14px!important;font-size:12px!important;font-weight:750!important}
+      .exam-module .ex-btn-primary{background:#3158c9!important;border-color:#3158c9!important;box-shadow:0 3px 8px rgba(49,88,201,.15)!important}.exam-module .ex-btn-primary:hover{background:#2448ad!important}
+      .exam-module .ex-btn-secondary{background:#fff!important;border-color:#dce3ee!important;color:#40516d!important}.exam-module .ex-btn-secondary:hover{background:#f5f8fd!important}
+      .exam-module .ex-table-wrap{border:1px solid #e4eaf3!important;border-radius:12px!important;box-shadow:0 2px 8px rgba(25,45,82,.025)}
+      .exam-module .ex-table{font-size:12px!important}.exam-module .ex-table th{background:#f3f6fb!important;color:#56647b!important;font-size:10px!important;letter-spacing:.035em;padding:12px!important}
+      .exam-module .ex-table td{padding:12px!important;color:#35445e!important;border-color:#edf0f5!important}.exam-module .ex-table tbody tr:nth-child(even) td{background:#fbfcfe}.exam-module .ex-table tr:hover td{background:#f4f7ff!important}
+      .exam-module .ex-alert{border-radius:12px!important;padding:13px 15px!important}.exam-module .ex-role-callout{border-radius:12px!important}.exam-module .ex-two-col{gap:17px!important}
+      @media(max-width:900px){.exam-module{padding:12px!important;border-radius:14px!important}.exam-module .exam-top:first-child{padding:16px!important}.exam-module .ex-two-col{grid-template-columns:1fr!important}.exam-module .ex-kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+      @media(max-width:560px){.exam-module .exam-tabs{margin-left:-2px!important;margin-right:-2px!important}.exam-module .exam-tab{padding:10px 12px!important}.exam-module .ex-kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important}.exam-module .ex-kpi{padding:13px!important}.exam-module .ex-kpi strong{font-size:23px!important}.exam-module .ex-panel,.exam-module .exam-panel{padding:14px!important}.exam-module .exam-top:nth-of-type(2){align-items:flex-start!important}}
+
     `}</style>
     <div className="exam-ui">
       <div className="exam-top">
