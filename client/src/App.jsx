@@ -3242,6 +3242,16 @@ async function handleVoucherSaved() {
 
   if (examOnlyMode) return (
     <main style={{ minHeight: '100vh', background: '#f8fafc' }} className="ledgerpro-shell">
+      <header style={{ minHeight: 54, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '8px 18px', background: '#111827', color: '#fff' }}>
+        <strong style={{ fontSize: 14 }}>Exam Portal · Examination & Marksheet</strong>
+        <button
+          type="button"
+          onClick={() => { sessionStorage.removeItem(AUTH_TOKEN_KEY); setUser(null); }}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 12px', border: '1px solid #ffffff35', borderRadius: 8, background: '#ffffff12', color: '#fff', cursor: 'pointer' }}
+        >
+          <LogOut size={15} /> Logout
+        </button>
+      </header>
       <ExaminationModule apiBaseUrl={API_BASE_URL} organizationId={ORGANIZATION_ID} user={user} />
     </main>
   );
