@@ -152,7 +152,7 @@ function normalizeAccount(account) {
   };
 }
 
-function LoginSystem({ onLogin }) {
+function LoginSystem({ onLogin, examOnlyMode = false }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -196,8 +196,9 @@ function LoginSystem({ onLogin }) {
           <Landmark size={32} color="#ff4fa3" />
         </div>
 
-        <h1 style={styles.loginTitle}>LedgerPro</h1>
+        <h1 style={styles.loginTitle}>{examOnlyMode ? 'Exam Portal' : 'LedgerPro'}</h1>
         <p style={styles.loginSubtitle}>United English Boarding School</p>
+        {examOnlyMode && <p style={{ textAlign: 'center', color: '#64748b', fontSize: 13, margin: '-10px 0 4px' }}>Examination & Marksheet Module</p>}
         <p style={styles.loginSubText}>
           विद्यालय लेखा व्यवस्थापन प्रणाली
         </p>
@@ -3137,9 +3138,10 @@ function Placeholder({ title, setActive }) {
 }
 
 export default function App() {
+  const examOnlyMode = new URLSearchParams(window.location.search).get('module') === 'exam';
   const [showPortfolio, setShowPortfolio] = useState(false);
   const [user, setUser] = useState(null);
-  const [active, setActive] = useState('Dashboard');
+  const [active, setActive] = useState(examOnlyMode ? 'Examination & Marksheet' : 'Dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [accounts, setAccounts] = useState([]);
@@ -3220,17 +3222,29 @@ async function loadTodayTransactions() {
   }
 }
 useEffect(() => {
-  loadAccounts();
-  loadTodayTransactions();
-}, []);
+  if (!examOnlyMode) {
+    loadAccounts();
+    loadTodayTransactions();
+  }
+}, [examOnlyMode]);
 async function handleVoucherSaved() {
   await Promise.all([
     loadAccounts(),
     loadTodayTransactions()
   ]);
 }
-  if (showPortfolio) return <PortfolioDashboard onOpenSchool={() => setShowPortfolio(false)} />;
-  if (!user) return <LoginSystem onLogin={setUser} />;
+  if (showPortfolio && !examOnlyMode) return <PortfolioDashboard onOpenSchool={() => setShowPortfolio(false)} />;
+  const handleLogin = nextUser => {
+    setUser(nextUser);
+    if (examOnlyMode) setActive('Examination & Marksheet');
+  };
+  if (!user) return <LoginSystem onLogin={handleLogin} examOnlyMode={examOnlyMode} />;
+
+  if (examOnlyMode) return (
+    <main style={{ minHeight: '100vh', background: '#f8fafc' }} className="ledgerpro-shell">
+      <ExaminationModule apiBaseUrl={API_BASE_URL} organizationId={ORGANIZATION_ID} user={user} />
+    </main>
+  );
 
   const pageTitle = active === 'Dashboard'
     ? 'Dashboard'
