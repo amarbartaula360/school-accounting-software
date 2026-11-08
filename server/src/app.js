@@ -2058,14 +2058,56 @@ app.use('/api/exams', examRoleGuard);
 app.get('/api/exams/summary', async (req, res) => {
   try {
     const orgId = req.examActor.organizationId;
-    const [exams, studentCount, yearCount, rulesCount] = await Promise.all([
+    const [exams, studentCount, yearCount, rulesCount, marksProgress, upcoming] = await Promise.all([
       pool.query(`SELECT status, COUNT(*)::int AS count FROM public.exam_exams WHERE organization_id=$1 GROUP BY status`, [orgId]),
       pool.query(`SELECT COUNT(*)::int AS count FROM public.fee_students WHERE organization_id=$1 AND is_active=TRUE AND (${studentGradeSql('class_name')}) BETWEEN 4 AND 10`, [orgId]),
       pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_academic_years WHERE organization_id=$1`, [orgId]),
-      pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE AND is_verified=TRUE`, [orgId])
+      pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE AND is_verified=TRUE`, [orgId]),
+      pool.query(
+        `WITH expected AS (
+           SELECT e.id AS exam_id, COUNT(s.id)*COUNT(DISTINCT c.id) AS expected_count
+           FROM public.exam_exams e
+           JOIN public.fee_students s ON s.organization_id=e.organization_id AND s.is_active=TRUE
+             AND (${studentGradeSql('s.class_name')})=e.grade
+           JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id
+           JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id
+           WHERE e.organization_id=$1 AND e.status<>'published'
+           GROUP BY e.id
+         ), entered AS (
+           SELECT e.id AS exam_id, COUNT(m.id) AS entered_count
+           FROM public.exam_exams e
+           JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id
+           JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id
+           JOIN public.exam_marks m ON m.component_id=c.id AND m.organization_id=e.organization_id
+           WHERE e.organization_id=$1 AND e.status<>'published'
+             AND (m.is_absent=TRUE OR m.marks_obtained IS NOT NULL OR COALESCE(m.teacher_note,'')<>'')
+           GROUP BY e.id
+         )
+         SELECT COALESCE(SUM(expected.expected_count),0)::int AS expected,
+                COALESCE(SUM(entered.entered_count),0)::int AS entered
+         FROM expected LEFT JOIN entered ON entered.exam_id=expected.exam_id`,
+        [orgId]
+      ),
+      pool.query(
+        `SELECT id, exam_name_en, grade, exam_date, exam_date_bs, status
+         FROM public.exam_exams WHERE organization_id=$1 AND exam_date>=CURRENT_DATE
+           AND status<>'published' ORDER BY exam_date, id LIMIT 6`, [orgId]
+      )
     ]);
     const byStatus = Object.fromEntries(exams.rows.map(r => [r.status, Number(r.count)]));
-    res.json({ exams: byStatus, activeStudents: Number(studentCount.rows[0]?.count || 0), academicYears: Number(yearCount.rows[0]?.count || 0), verifiedGradingRules: Number(rulesCount.rows[0]?.count || 0) });
+    const expected = Number(marksProgress.rows[0]?.expected || 0);
+    const entered = Number(marksProgress.rows[0]?.entered || 0);
+    res.json({
+      exams: byStatus,
+      totalExams: exams.rows.reduce((n, r) => n + Number(r.count), 0),
+      activeStudents: Number(studentCount.rows[0]?.count || 0),
+      academicYears: Number(yearCount.rows[0]?.count || 0),
+      verifiedGradingRules: Number(rulesCount.rows[0]?.count || 0),
+      marksEntryCompleted: entered,
+      marksEntryPending: Math.max(0, expected - entered),
+      marksEntryProgress: expected ? Math.round(entered / expected * 100) : 0,
+      upcomingExams: upcoming.rows
+    });
   } catch (err) { console.error('Exam summary error:', err.message); res.status(500).json({ message: 'Could not load examination dashboard.' }); }
 });
 
