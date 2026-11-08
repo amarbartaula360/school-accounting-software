@@ -134,8 +134,8 @@ const words = {
 };
 
 export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user }) {
-  const [lang, setLang] = useState('ne');
-  const t = (key) => words[lang]?.[key] ?? words.en[key] ?? key;
+  const lang = 'en';
+  const t = (key) => words.en[key] ?? key;
   const [tab, setTab] = useState('dashboard');
   const [settingsTab, setSettingsTab] = useState('grading');
   const [loading, setLoading] = useState(false);
@@ -168,7 +168,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const [absentValues, setAbsentValues] = useState({});
   const [noteValues, setNoteValues] = useState({});
 
-  const [yearForm, setYearForm] = useState({ yearName: '२०८३', startDateBs: '२०८३-०१-०१', endDateBs: '२०८३-१२-३०' });
+  const [yearForm, setYearForm] = useState({ yearName: '2083/084', startDateBs: '2083-01-01', endDateBs: '2083-12-30' });
   const [subjectForm, setSubjectForm] = useState({ grade: 4, subjectCode: '', nameEn: '', nameNe: '', isPractical: false });
   const [competencyForm, setCompetencyForm] = useState({ grade: 4, subjectId: '', competencyCode: '', descriptionEn: '', descriptionNe: '', sourceGuideline: '', sourceReference: '' });
   const [levelForm, setLevelForm] = useState({ grade: 4, levelCode: '', nameEn: '', nameNe: '', descriptionEn: '', descriptionNe: '', sourceGuideline: '', isOfficiallyVerified: false, displayOrder: 1 });
@@ -336,7 +336,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
 
   const addYear = () => run(async () => {
     const startDate = fromBS(yearForm.startDateBs), endDate = fromBS(yearForm.endDateBs);
-    if (!startDate || !endDate) throw new Error('वि.सं. सुरु/अन्तिम मिति मिलेन। YYYY-MM-DD प्रयोग गर्नुहोस्।');
+    if (!startDate || !endDate) throw new Error('Enter valid B.S. start and end dates in YYYY-MM-DD format.');
     await api('/api/exams/academic-years', { method: 'POST', body: { yearName: normalizeDigits(yearForm.yearName), startDate, endDate } });
   }, lang === 'ne' ? 'शैक्षिक सत्र थपियो।' : 'Academic year added.');
 
@@ -389,7 +389,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const changeExamStatus = (status) => run(async () => { await api(`/api/exams/${selectedExamId}/status`, { method: 'POST', body: { status } }); await refreshDetails(selectedExamId); }, lang === 'ne' ? 'परीक्षा स्थिति परिवर्तन भयो।' : 'Exam status updated.', false);
 
   const saveMarks = () => run(async () => {
-    if (!selectedExamId || !selectedComponent) throw new Error('परीक्षा र component छान्नुहोस्।');
+    if (!selectedExamId || !selectedComponent) throw new Error('Select an exam and assessment component.');
     const payload = (details?.students || []).map(st => {
       const key = `${selectedComponent.id}:${st.id}`;
       const raw = markValues[key] ?? existingMark(selectedComponent.id, st.id)?.marks_obtained ?? '';
@@ -397,19 +397,19 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
       const teacherNote = noteValues[key] ?? existingMark(selectedComponent.id, st.id)?.teacher_note ?? '';
       return { componentId: Number(selectedComponent.id), studentId: Number(st.id), marksObtained: absent || raw === '' ? null : Number(raw), isAbsent: Boolean(absent), teacherNote };
     }).filter(m => m.marksObtained !== null || m.isAbsent || m.teacherNote);
-    if (!payload.length) throw new Error('सेभ गर्न अङ्क/अनुपस्थिति/टिप्पणी भर्नुहोस्।');
+    if (!payload.length) throw new Error('Enter marks, mark the student absent, or add a teacher note before saving.');
     await api(`/api/exams/${selectedExamId}/marks`, { method: 'POST', body: { marks: payload } });
     setMarkValues({}); setAbsentValues({}); setNoteValues({}); await refreshDetails(selectedExamId);
   }, lang === 'ne' ? 'अङ्क सुरक्षित भयो।' : 'Marks saved.', false);
 
   const saveCompetency = (e) => { e.preventDefault(); run(async () => {
-    if (!selectedExamId || !selectedStudentId || !competencyResultForm.subjectId || !competencyResultForm.competencyId) throw new Error('परीक्षा, विद्यार्थी, विषय र competency छान्नुहोस्।');
+    if (!selectedExamId || !selectedStudentId || !competencyResultForm.subjectId || !competencyResultForm.competencyId) throw new Error('Select an exam, student, subject, and learning outcome.');
     await api(`/api/exams/${selectedExamId}/competency-results`, { method: 'POST', body: { studentId: Number(selectedStudentId), subjectId: Number(competencyResultForm.subjectId), competencyId: Number(competencyResultForm.competencyId), achievementLevelId: competencyResultForm.achievementLevelId ? Number(competencyResultForm.achievementLevelId) : null, observationEn: competencyResultForm.observationEn, observationNe: competencyResultForm.observationNe, evidenceNote: competencyResultForm.evidenceNote, nextStepsEn: competencyResultForm.nextStepsEn, nextStepsNe: competencyResultForm.nextStepsNe } });
     await refreshDetails(selectedExamId);
   }, lang === 'ne' ? 'सिकाइ उपलब्धि सुरक्षित भयो।' : 'Competency result saved.', false); };
 
   const saveProgress = (e) => { e.preventDefault(); run(async () => {
-    if (!selectedExamId || !selectedStudentId) throw new Error('परीक्षा र विद्यार्थी छान्नुहोस्।');
+    if (!selectedExamId || !selectedStudentId) throw new Error('Select an exam and student.');
     await api(`/api/exams/${selectedExamId}/progress-reports`, { method: 'POST', body: { studentId: Number(selectedStudentId), ...progressForm } });
     await refreshDetails(selectedExamId);
   }, lang === 'ne' ? 'प्रगति प्रतिवेदन सुरक्षित भयो।' : 'Progress report saved.', false); };
@@ -523,7 +523,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
 
   const schoolPrintHeader = (reportTitle) => {
     const name = lang === 'ne'
-      ? (reportSettings.school_name_ne || reportSettings.school_name_en || 'विद्यालयको नाम')
+      ? (reportSettings.school_name_ne || reportSettings.school_name_en || 'School Name')
       : (reportSettings.school_name_en || reportSettings.school_name_ne || 'School Name');
     const address = lang === 'ne'
       ? (reportSettings.address_ne || reportSettings.address_en || '')
@@ -710,7 +710,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
     <div className="exam-ui">
       <div className="exam-top">
         <div><h1><GraduationCap size={25} style={{ verticalAlign: 'middle', marginRight: 7 }} />{t('title')}</h1><p>{t('subtitle')}</p><p>{t('currentUser')}: <b>{user?.email || '—'}</b> · Role: <b>{ROLE_LABELS[currentRole] || currentRole}</b></p></div>
-        <div className="exam-lang"><button className={lang === 'ne' ? 'active' : ''} onClick={() => setLang('ne')}>नेपाली</button><button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')}>English</button></div>
+        
       </div>
       {error && <div className="ex-alert ex-alert-error"><b>{t('error')}:</b> {error}</div>}
       {notice && <div className="ex-alert ex-alert-ok"><CheckCircle2 size={14} style={{ verticalAlign: 'middle', marginRight: 5 }} />{notice}</div>}
@@ -739,14 +739,14 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
           ].map(([id, Icon, title, description]) => <button type="button" className="ex-quick-card" key={id} onClick={() => setTab(id)}><span className="ex-quick-icon"><Icon size={19}/></span><strong>{title}</strong><small>{description}</small><span className="ex-quick-link">{lang === 'ne' ? 'यहाँ क्लिक गर्नुहोस् →' : 'Continue →'}</span></button>)}
         </div>)}
         {panel(t('exams'), lang === 'ne' ? 'कक्षा ४–५ मा competency-first; ६–८ मा configurable subject-wise assessment; ९–१० मा formal marksheet template।' : 'Competency-first for 4–5; configurable subject assessment for 6–8; formal marksheet template for 9–10.', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('examInfo')}</th><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('model')}</th><th>{t('examStatus')}</th><th /></tr></thead><tbody>{displayExams.map(e => <tr key={e.id}><td><b>{lang === 'ne' ? e.exam_name_ne : e.exam_name_en}</b><small>{e.exam_date_bs || toBS(e.exam_date) || '—'}</small></td><td>{e.grade}</td><td>{e.year_name}</td><td>{gradeModelLabel(e.assessment_model,lang)}</td><td>{statusBadge(e.status)}</td><td>{actionBtn(t('chooseExam'), () => { setSelectedExamId(String(e.id)); setTab('exams'); })}</td></tr>)}{!displayExams.length && <tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
-        {panel(t('officialRules'), t('sourceWarning'), <div className="ex-list"><div><a className="ex-link" href="https://moecdc.gov.np/content/647/letter-grading-directory--2083/" target="_blank" rel="noreferrer">CDC — लेटर ग्रेडिङ निर्देशिका, २०८३</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/646/guide-to-student-assessment-in-basic-level/" target="_blank" rel="noreferrer">CDC — कक्षा ४–५ विद्यार्थी मूल्याङ्कन मार्गदर्शन, २०८३</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/608/facilitation-manual-for-conducting-projects-and-experiments/" target="_blank" rel="noreferrer">CDC — आन्तरिक मूल्याङ्कन, परियोजना तथा प्रयोगात्मक कार्य, २०८२ (कक्षा ४–८)</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/21/internal-assessment-standards-for-student-legacy--2080/" target="_blank" rel="noreferrer">CDC — विद्यार्थी सिकाइका लागि आन्तरिक मूल्याङ्कन मापदण्ड, २०८० (कक्षा ९–१२)</a></div><div><a className="ex-link" href="https://www.cehrd.gov.np/content/13339/13339-student-assessment_trm_g4-5/" target="_blank" rel="noreferrer">CEHRD — कक्षा ४–५ विद्यार्थी मूल्याङ्कन स्रोत सामग्री</a></div></div>)}
+        {panel(t('officialRules'), t('sourceWarning'), <div className="ex-list"><div><a className="ex-link" href="https://moecdc.gov.np/content/647/letter-grading-directory--2083/" target="_blank" rel="noreferrer">CDC — Letter Grading Directive, 2083</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/646/guide-to-student-assessment-in-basic-level/" target="_blank" rel="noreferrer">CDC — Student Assessment Guide for Grades 4–5, 2083</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/608/facilitation-manual-for-conducting-projects-and-experiments/" target="_blank" rel="noreferrer">CDC — Internal Assessment, Projects and Practical Work, 2082 (Grades 4–8)</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/21/internal-assessment-standards-for-student-legacy--2080/" target="_blank" rel="noreferrer">CDC — Internal Assessment Standards for Student Learning, 2080 (Grades 9–12)</a></div><div><a className="ex-link" href="https://www.cehrd.gov.np/content/13339/13339-student-assessment_trm_g4-5/" target="_blank" rel="noreferrer">CEHRD — Student Assessment Resource Material for Grades 4–5</a></div></div>)}
       </>}
 
       {tab === 'years' && <div className="ex-two-col">
         {panel(t('createYear'), lang === 'ne' ? 'मिति वि.सं. मा राख्नुहोस्; database मा AD मिति सुरक्षित हुन्छ।' : 'Enter B.S. dates; AD dates are stored in the database.', <form onSubmit={e => { e.preventDefault(); addYear(); }} className="ex-grid">
-          {field(t('yearName'), input(yearForm.yearName, v => setYearForm(f => ({...f, yearName:v})), { required: true, placeholder: '२०८३/०८४' }))}
-          {field(t('startDate'), input(yearForm.startDateBs, v => setYearForm(f => ({...f,startDateBs:v})), {required:true, placeholder:'२०८३-०१-०१'}), `${fromBS(yearForm.startDateBs) || '—'} AD`)}
-          {field(t('endDate'), input(yearForm.endDateBs, v => setYearForm(f => ({...f,endDateBs:v})), {required:true, placeholder:'२०८३-१२-३०'}), `${fromBS(yearForm.endDateBs) || '—'} AD`)}
+          {field(t('yearName'), input(yearForm.yearName, v => setYearForm(f => ({...f, yearName:v})), { required: true, placeholder: '2083/084' }))}
+          {field(t('startDate'), input(yearForm.startDateBs, v => setYearForm(f => ({...f,startDateBs:v})), {required:true, placeholder:'2083-01-01'}), `${fromBS(yearForm.startDateBs) || '—'} AD`)}
+          {field(t('endDate'), input(yearForm.endDateBs, v => setYearForm(f => ({...f,endDateBs:v})), {required:true, placeholder:'2083-12-30'}), `${fromBS(yearForm.endDateBs) || '—'} AD`)}
           <div className="ex-actions" style={{gridColumn:'1/-1'}}>{submitBtn(t('createYear'), <Plus size={15} />)}</div>
         </form>)}
         {panel(t('years'), '', <div className="ex-list">{years.map(y => <div className="ex-list-item" key={y.id}><div><strong>{y.year_name} {y.is_active && <span className="ex-badge">{t('active')}</span>}</strong><small>{toBS(y.start_date)} — {toBS(y.end_date)} · AD {String(y.start_date).slice(0,10)} — {String(y.end_date).slice(0,10)}</small></div>{!y.is_active && actionBtn(t('activate'), () => activateYear(y.id), 'secondary')}</div>)}{!years.length && <p className="ex-empty">{t('noRecords')}</p>}</div>)}
@@ -799,7 +799,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
             {field(t('examNameEn'),input(examForm.examNameEn,v=>setExamForm(f=>({...f,examNameEn:v})),{required:true}))}
             {field(t('examNameNe'),input(examForm.examNameNe,v=>setExamForm(f=>({...f,examNameNe:v})),{required:true}))}
             {field(t('examType'),select(examForm.examType,v=>setExamForm(f=>({...f,examType:v})),[{value:'unit',label:'Unit Test'},{value:'terminal',label:'Terminal'},{value:'annual',label:'Annual'},{value:'final',label:'Final'},{value:'practical',label:'Practical'},{value:'other',label:'Other'}]))}
-            {field(t('examDate'),input(examForm.examDateBs,v=>setExamForm(f=>({...f,examDateBs:v})),{placeholder:'२०८३-०८-१२'}),`AD: ${fromBS(examForm.examDateBs)||'—'}`)}
+            {field(t('examDate'),input(examForm.examDateBs,v=>setExamForm(f=>({...f,examDateBs:v})),{placeholder:'2083-08-12'}),`AD: ${fromBS(examForm.examDateBs)||'—'}`)}
             <div style={{gridColumn:'1/-1'}}><span className="ex-data-chip">{t('model')}: {gradeModelLabel(gradeModel(examForm.grade),lang)}</span></div>
             <div className="ex-actions" style={{gridColumn:'1/-1'}}>{submitBtn(editingExamId ? t('updateExam') : t('createExam'),editingExamId ? <Save size={15}/> : <Plus size={15}/>)}{editingExamId&&actionBtn(t('cancelEdit'),cancelExamEdit,'secondary')}</div>
           </form>)}
