@@ -2357,10 +2357,11 @@ app.get('/api/exams', async (req, res) => {
 
 app.post('/api/exams', async (req, res) => {
   try {
-    const { academicYearId, grade, examNameEn, examNameNe, examType = 'terminal', examDate = null, examDateBs = '' } = req.body || {};
+    const { academicYearId, grade, examNameEn, examType = 'terminal', examDate = null, examDateBs = '' } = req.body || {};
+    const examNameNe = String(examNameEn || '').trim();
     const g = Number(grade), yearId = Number(academicYearId), orgId = req.examActor.organizationId;
-    if (!isValidOrganizationId(yearId) || !Number.isInteger(g) || g < 4 || g > 10 || !String(examNameEn || '').trim() || !String(examNameNe || '').trim() || !['terminal','unit','annual','final','practical','other'].includes(examType) || (examDate && !isValidDate(examDate))) {
-      return res.status(400).json({ message: 'Academic year, grade, exam names and valid date/type are required.' });
+    if (!isValidOrganizationId(yearId) || !Number.isInteger(g) || g < 4 || g > 10 || !String(examNameEn || '').trim() || !['terminal','unit','annual','final','practical','other'].includes(examType) || (examDate && !isValidDate(examDate))) {
+      return res.status(400).json({ message: 'Academic year, grade, exam name and valid date/type are required.' });
     }
     const model = examModelForGrade(g);
     const yearCheck = await pool.query('SELECT id FROM public.exam_academic_years WHERE id=$1 AND organization_id=$2', [yearId, orgId]);
@@ -2386,7 +2387,7 @@ app.post('/api/exams', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO public.exam_exams (organization_id, academic_year_id, grade, class_name, section, exam_name_en, exam_name_ne, exam_type, assessment_model, exam_date, exam_date_bs, created_by_email)
        VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9::date,NULLIF($10,''),$11) RETURNING *`,
-      [orgId, yearId, g, compatibilityClassName, String(examNameEn).trim(), String(examNameNe).trim(), examType, model, examDate || null, String(examDateBs).trim(), req.examActor.email]);
+      [orgId, yearId, g, compatibilityClassName, String(examNameEn).trim(), examNameNe, examType, model, examDate || null, String(examDateBs).trim(), req.examActor.email]);
     await pool.query(`INSERT INTO public.exam_result_history (organization_id, exam_id, actor_email, actor_role, action, new_value) VALUES ($1,$2,$3,$4,'exam_created',$5::jsonb)`, [orgId, result.rows[0].id, req.examActor.email, req.examActor.role, JSON.stringify(result.rows[0])]);
     res.status(201).json(result.rows[0]);
   } catch (err) { console.error('Create exam error:', err.message); res.status(500).json({ message: 'Could not create examination.' }); }
@@ -2401,12 +2402,13 @@ app.put('/api/exams/:examId', async (req, res) => {
     if (!['admin', 'exam_coordinator'].includes(req.examActor.role)) {
       return res.status(403).json({ message: 'Only examination admin/coordinator can edit exam setup.' });
     }
-    const { academicYearId, examNameEn, examNameNe, examType = 'terminal', examDate = null, examDateBs = '' } = req.body || {};
+    const { academicYearId, examNameEn, examType = 'terminal', examDate = null, examDateBs = '' } = req.body || {};
+    const examNameNe = String(examNameEn || '').trim();
     const yearId = Number(academicYearId);
     const allowedTypes = ['terminal', 'unit', 'annual', 'final', 'practical', 'other'];
-    if (!isValidOrganizationId(yearId) || !String(examNameEn || '').trim() || !String(examNameNe || '').trim() ||
+    if (!isValidOrganizationId(yearId) || !String(examNameEn || '').trim() ||
         !allowedTypes.includes(examType) || (examDate && !isValidDate(examDate))) {
-      return res.status(400).json({ message: 'Academic year, bilingual exam names, valid type and date are required.' });
+      return res.status(400).json({ message: 'Academic year, exam name, valid type and date are required.' });
     }
     const yearCheck = await client.query('SELECT id FROM public.exam_academic_years WHERE id=$1 AND organization_id=$2', [yearId, orgId]);
     if (!yearCheck.rowCount) return res.status(400).json({ message: 'Academic year not found.' });
@@ -2439,7 +2441,7 @@ app.put('/api/exams/:examId', async (req, res) => {
        SET academic_year_id=$3, exam_name_en=$4, exam_name_ne=$5, exam_type=$6,
            exam_date=$7::date, exam_date_bs=NULLIF($8,''), updated_at=NOW()
        WHERE id=$1 AND organization_id=$2 RETURNING *`,
-      [examId, orgId, yearId, String(examNameEn).trim(), String(examNameNe).trim(), examType, examDate || null, String(examDateBs).trim()]
+      [examId, orgId, yearId, String(examNameEn).trim(), examNameNe, examType, examDate || null, String(examDateBs).trim()]
     );
     await writeExamHistory(client, {
       organizationId: orgId, examId, actor: req.examActor, action: 'exam_setup_edited',
