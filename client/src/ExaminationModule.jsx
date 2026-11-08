@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 
 const GRADES = [4, 5, 6, 7, 8, 9, 10];
-const BS_MONTHS = ['वैशाख', 'जेठ', 'असार', 'साउन', 'भदौ', 'असोज', 'कात्तिक', 'मंसिर', 'पुस', 'माघ', 'फागुन', 'चैत'];
+const BS_MONTHS = ['Baisakh', 'Jestha', 'Ashadh', 'Shrawan', 'Bhadra', 'Ashwin', 'Kartik', 'Mangsir', 'Poush', 'Magh', 'Falgun', 'Chaitra'];
 const TYPES = ['written', 'internal', 'practical', 'project', 'continuous', 'presentation', 'portfolio', 'oral', 'other'];
 const ROLE_LABELS = { admin: 'Administrator', principal: 'Principal', exam_coordinator: 'Exam Coordinator', teacher: 'Teacher' };
 
@@ -389,7 +389,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
     await refreshDetails(selectedExamId);
   }, lang === 'ne' ? 'परीक्षा तालिका सुरक्षित भयो।' : 'Examination schedule saved.', false); };
 
-  const changeExamStatus = (status) => run(async () => { await api(`/api/exams/${selectedExamId}/status`, { method: 'POST', body: { status } }); await refreshDetails(selectedExamId); }, lang === 'ne' ? 'परीक्षा स्थिति परिवर्तन भयो।' : 'Exam status updated.', false);
+  const changeExamStatus = (status) => run(async () => { await api(`/api/exams/${selectedExamId}/status`, { method: 'POST', body: { status } }); await refreshDetails(selectedExamId); }, 'Exam status updated.', false);
 
   const saveMarks = () => run(async () => {
     if (!selectedExamId || !selectedComponent) throw new Error('Select an exam and assessment component.');
