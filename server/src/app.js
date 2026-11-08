@@ -2667,9 +2667,44 @@ app.post('/api/exams/:examId/status', async (req, res) => {
     if (!before.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
     const old = before.rows[0];
     if (!transitions[old.status]?.includes(target)) { await client.query('ROLLBACK'); return res.status(409).json({ message: `Status ${old.status} बाट ${target} मा जान मिल्दैन।` }); }
-    if (target === 'in_review') {
-      const component = await client.query('SELECT COUNT(*)::int AS n FROM public.exam_exam_subjects WHERE exam_id=$1', [examId]);
-      if (!component.rows[0].n) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Review मा पठाउनु अघि कम्तीमा एउटा subject configure गर्नुहोस्।' }); }
+    if (target === 'in_review' || target === 'published') {
+      const component = await client.query(
+        `SELECT COUNT(*)::int AS n
+         FROM public.exam_exam_subjects ees
+         JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id
+         WHERE ees.exam_id=$1 AND ees.organization_id=$2 AND c.organization_id=$2`,
+        [examId, orgId]
+      );
+      if (!component.rows[0].n) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: 'Configure at least one subject and assessment component before submitting results.' });
+      }
+      const incomplete = await client.query(
+        `SELECT COUNT(*)::int AS n
+         FROM public.fee_students s
+         JOIN public.exam_exams e ON e.id=$1 AND e.organization_id=s.organization_id
+         JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id
+         JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id
+         LEFT JOIN public.exam_marks m ON m.component_id=c.id AND m.student_id=s.id AND m.organization_id=e.organization_id
+         WHERE s.organization_id=$2 AND s.is_active=TRUE
+           AND (${studentGradeSql('s.class_name')})=e.grade
+           AND (m.id IS NULL OR (c.max_marks IS NOT NULL AND m.marks_obtained IS NULL AND NOT m.is_absent)
+                OR (c.max_marks IS NULL AND COALESCE(m.teacher_note,'')=''))`,
+        [examId, orgId]
+      );
+      if (Number(incomplete.rows[0]?.n || 0) > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: `Cannot submit or publish results: ${incomplete.rows[0].n} student-component entries are incomplete. Enter marks, record absence, or add descriptive assessment notes first.` });
+      }
+      const subjectsWithoutPassRule = await client.query(
+        `SELECT COUNT(*)::int AS n FROM public.exam_exam_subjects
+         WHERE exam_id=$1 AND organization_id=$2 AND (pass_marks IS NULL OR full_marks IS NULL)`,
+        [examId, orgId]
+      );
+      if (target === 'published' && Number(subjectsWithoutPassRule.rows[0]?.n || 0) > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: 'Cannot publish results until Full Marks and Pass Marks are configured for every subject.' });
+      }
     }
     const updated = await client.query(
       `UPDATE public.exam_exams SET status=$3, updated_at=NOW(),
