@@ -2065,7 +2065,7 @@ app.get('/api/exams/summary', async (req, res) => {
       pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE AND is_verified=TRUE`, [orgId]),
       pool.query(
         `WITH expected AS (
-           SELECT e.id AS exam_id, COUNT(s.id)*COUNT(DISTINCT c.id) AS expected_count
+           SELECT e.id AS exam_id, COUNT(DISTINCT s.id)*COUNT(DISTINCT c.id) AS expected_count
            FROM public.exam_exams e
            JOIN public.fee_students s ON s.organization_id=e.organization_id AND s.is_active=TRUE
              AND (${studentGradeSql('s.class_name')})=e.grade
@@ -2644,6 +2644,7 @@ app.put('/api/exams/:examId/schedule', async (req, res) => {
          JOIN public.exam_subjects s ON s.id=ees.subject_id
          WHERE sch.organization_id=$1 AND sch.exam_id<>$2
            AND sch.exam_date=$3::date
+           AND NOT (sch.exam_id=$2 AND sch.exam_subject_id=$8)
            AND sch.start_time IS NOT NULL AND sch.end_time IS NOT NULL
            AND sch.start_time < $5::time AND sch.end_time > $4::time
            AND (
@@ -2651,7 +2652,7 @@ app.put('/api/exams/:examId/schedule', async (req, res) => {
              OR ($7<>'' AND LOWER(COALESCE(sch.invigilator,''))=LOWER($7))
            )
          LIMIT 1`,
-        [orgId, examId, examDate || null, startTime, endTime, String(roomOrVenue).trim(), String(invigilator).trim()]
+        [orgId, examId, examDate || null, startTime, endTime, String(roomOrVenue).trim(), String(invigilator).trim(), subjectId]
       );
       if (conflict.rowCount) {
         await client.query('ROLLBACK');
