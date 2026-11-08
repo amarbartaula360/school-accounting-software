@@ -2065,27 +2065,31 @@ app.get('/api/exams/summary', async (req, res) => {
       pool.query(`SELECT COUNT(*)::int AS count FROM public.exam_grading_rules WHERE organization_id=$1 AND is_active=TRUE AND is_verified=TRUE`, [orgId]),
       pool.query(
         `WITH expected AS (
-           SELECT e.id AS exam_id, COUNT(DISTINCT s.id)*COUNT(DISTINCT c.id) AS expected_count
-           FROM public.exam_exams e
-           JOIN public.fee_students s ON s.organization_id=e.organization_id AND s.is_active=TRUE
-             AND (${studentGradeSql('s.class_name')})=e.grade
-           JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id
-           JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id
-           WHERE e.organization_id=$1 AND e.status<>'published'
-           GROUP BY e.id
-         ), entered AS (
-           SELECT e.id AS exam_id, COUNT(m.id) AS entered_count
-           FROM public.exam_exams e
-           JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id
-           JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id
-           JOIN public.exam_marks m ON m.component_id=c.id AND m.organization_id=e.organization_id
-           WHERE e.organization_id=$1 AND e.status<>'published'
-             AND (m.is_absent=TRUE OR m.marks_obtained IS NOT NULL OR COALESCE(m.teacher_note,'')<>'')
-           GROUP BY e.id
-         )
-         SELECT COALESCE(SUM(expected.expected_count),0)::int AS expected,
-                COALESCE(SUM(entered.entered_count),0)::int AS entered
-         FROM expected LEFT JOIN entered ON entered.exam_id=expected.exam_id`,
+            SELECT e.id AS exam_id, COUNT(DISTINCT s.id) * COUNT(DISTINCT c.id) AS expected_count
+            FROM public.exam_exams e
+            JOIN public.fee_students s ON s.organization_id=e.organization_id AND s.is_active=TRUE
+              AND (${studentGradeSql('s.class_name')})=e.grade
+              AND (e.section IS NULL OR LOWER(TRIM(COALESCE(s.section,'')))=LOWER(TRIM(e.section)))
+            JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id
+            JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id
+            WHERE e.organization_id=$1 AND e.status<>'published'
+            GROUP BY e.id
+          ), entered AS (
+            SELECT e.id AS exam_id, COUNT(DISTINCT m.id) AS entered_count
+            FROM public.exam_exams e
+            JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id
+            JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id
+            JOIN public.exam_marks m ON m.component_id=c.id AND m.organization_id=e.organization_id
+            JOIN public.fee_students s ON s.id=m.student_id AND s.organization_id=e.organization_id
+              AND s.is_active=TRUE AND (${studentGradeSql('s.class_name')})=e.grade
+              AND (e.section IS NULL OR LOWER(TRIM(COALESCE(s.section,'')))=LOWER(TRIM(e.section)))
+            WHERE e.organization_id=$1 AND e.status<>'published'
+              AND (m.is_absent=TRUE OR m.marks_obtained IS NOT NULL OR COALESCE(m.teacher_note,'')<>'')
+            GROUP BY e.id
+          )
+          SELECT COALESCE(SUM(expected.expected_count),0)::int AS expected,
+                 COALESCE(SUM(entered.entered_count),0)::int AS entered
+          FROM expected LEFT JOIN entered ON entered.exam_id=expected.exam_id`,
         [orgId]
       ),
       pool.query(
@@ -2509,7 +2513,7 @@ app.post('/api/exams/:examId/marks', async (req, res) => {
   try {
     const orgId = req.examActor.organizationId, examId = Number(req.params.examId);
     const marks = req.body?.marks;
-    if (!isValidOrganizationId(examId) || !Array.isArray(marks) || !marks.length || marks.length > 2000) return res.status(400).json({ message: 'Exam ID र 1–2000 marks entries आवश्यक छन्।' });
+    if (!isValidOrganizationId(examId) || !Array.isArray(marks) || !marks.length || marks.length > 2000) return res.status(400).json({ message: 'Exam ID and 1–2000 marks entries are required.' });
     await client.query('BEGIN');
     const examResult = await client.query('SELECT * FROM public.exam_exams WHERE id=$1 AND organization_id=$2 FOR UPDATE', [examId, orgId]);
     if (!examResult.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Exam not found.' }); }
@@ -2642,9 +2646,9 @@ app.put('/api/exams/:examId/schedule', async (req, res) => {
          JOIN public.exam_exams e ON e.id=sch.exam_id
          JOIN public.exam_exam_subjects ees ON ees.id=sch.exam_subject_id
          JOIN public.exam_subjects s ON s.id=ees.subject_id
-         WHERE sch.organization_id=$1 AND sch.exam_id<>$2
-           AND sch.exam_date=$3::date
-           AND NOT (sch.exam_id=$2 AND sch.exam_subject_id=$8)
+         WHERE sch.organization_id=$1
+            AND sch.exam_date=$3::date
+            AND NOT (sch.exam_id=$2 AND sch.exam_subject_id=$8)
            AND sch.start_time IS NOT NULL AND sch.end_time IS NOT NULL
            AND sch.start_time < $5::time AND sch.end_time > $4::time
            AND (
