@@ -569,7 +569,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
     return { perSubject, total: allComplete ? perSubject.reduce((s, x) => s + x.result.total, 0) : null, full: allComplete ? perSubject.reduce((s, x) => s + Number(x.result.full || 0), 0) : null, pct, gpa, overallPass };
   }
 
-  const currentRole = roles.find(r => r.user_email?.toLowerCase() === user?.email?.toLowerCase() && r.is_active)?.role || 'unassigned';
+  const currentRole = roles.find(r => r.user_email?.toLowerCase() === user?.email?.toLowerCase() && r.is_active)?.role || (user?.role === 'admin' ? 'admin' : 'unassigned');
   useEffect(() => {
     if (!details || !selectedStudentId) return;
     const r = (details.progressReports || []).find(x => String(x.student_id) === String(selectedStudentId));
@@ -817,29 +817,73 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
       </div>}
 
       {tab === 'dashboard' && <>
-        <div className="ex-kpis" style={{gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))'}}>
-          <div className="ex-kpi"><span>Total Examinations</span><strong>{summary.totalExams ?? Object.values(summary.exams || {}).reduce((n,v)=>n+Number(v),0)}</strong><small>All examination statuses</small></div>
-          <div className="ex-kpi"><span>Total Students</span><strong>{summary.activeStudents ?? 0}</strong><small>Active students · Grades 4–10</small></div>
-          <div className="ex-kpi"><span>Marks Entry Completed</span><strong>{summary.marksEntryCompleted ?? 0}</strong><small>Student and component records</small></div>
-          <div className="ex-kpi"><span>Marks Entry Pending</span><strong>{summary.marksEntryPending ?? 0}</strong><small>Entries still required</small></div>
-          <div className="ex-kpi"><span>Results Published</span><strong>{summary.exams?.published || 0}</strong><small>Published examinations</small></div>
-          <div className="ex-kpi"><span>Upcoming Examinations</span><strong>{summary.upcomingExams?.length ?? 0}</strong><small>Scheduled from today</small></div>
+        <section className="ex-dashboard-hero" style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:20,flexWrap:'wrap',padding:'24px 26px',borderRadius:18,background:'linear-gradient(120deg,#172554,#3157c8)',color:'#fff',marginBottom:16}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:800,letterSpacing:'.12em',textTransform:'uppercase',opacity:.8,marginBottom:8}}>SCHOOL ASSESSMENT WORKSPACE</div>
+            <h2 style={{fontSize:25,fontWeight:800,margin:'0 0 7px'}}>Examination &amp; Student Progress</h2>
+            <p style={{margin:0,fontSize:13,opacity:.88,lineHeight:1.7}}>Grades 4–10 · Nepali / English · Configurable official assessment rules</p>
+            <p style={{margin:'12px 0 0',fontSize:12,opacity:.92}}>Signed in as <b>{user?.email || '—'}</b> · <b>{ROLE_LABELS[currentRole] || (user?.role === 'admin' ? 'Administrator' : currentRole)}</b></p>
+          </div>
+          <div style={{display:'flex',gap:9,flexWrap:'wrap'}}>
+            <button type="button" className="ex-btn" style={{background:'#fff',color:'#2446a6'}} onClick={()=>setTab('exams')}><Plus size={15}/> Create Assessment</button>
+            <button type="button" className="ex-btn" style={{background:'rgba(255,255,255,.13)',color:'#fff',border:'1px solid rgba(255,255,255,.35)'}} onClick={refreshBase}><RefreshCw size={15}/> Refresh Data</button>
+          </div>
+        </section>
+
+        <div className="ex-kpis" style={{gridTemplateColumns:'repeat(auto-fit,minmax(155px,1fr))'}}>
+          <div className="ex-kpi"><span>Active Students</span><strong>{summary.activeStudents ?? students.length}</strong><small>Across configured classes</small></div>
+          <div className="ex-kpi"><span>Academic Years</span><strong>{years.length}</strong><small>{years.find(y=>y.is_active)?.year_name || 'No active year selected'}</small></div>
+          <div className="ex-kpi"><span>Assessments</span><strong>{summary.totalExams ?? Object.values(summary.exams || {}).reduce((n,v)=>n+Number(v),0)}</strong><small>All statuses</small></div>
+          <div className="ex-kpi"><span>Marks / Records Completed</span><strong>{summary.marksEntryCompleted ?? 0}</strong><small>Entered student records</small></div>
+          <div className="ex-kpi"><span>Records Pending</span><strong>{summary.marksEntryPending ?? 0}</strong><small>Awaiting assessment entry</small></div>
+          <div className="ex-kpi"><span>Published Results</span><strong>{summary.exams?.published || 0}</strong><small>Finalized assessments</small></div>
         </div>
-        <div className="ex-panel" style={{marginBottom:16}}>
-          <div className="ex-panel-head"><div><h2>Marks Entry Progress</h2><p>Completion across active, unpublished examinations</p></div><strong>{summary.marksEntryProgress ?? 0}%</strong></div>
-          <div style={{height:10,background:'#edf1f7',borderRadius:99,overflow:'hidden'}}><div style={{height:'100%',width:`${Math.max(0,Math.min(100,Number(summary.marksEntryProgress||0)))}%`,background:'#3157c8',borderRadius:99,transition:'width .2s'}} /></div>
+
+        <div className="ex-two-col" style={{alignItems:'stretch',marginBottom:16}}>
+          <section className="ex-panel">
+            <div className="ex-panel-head"><div><h2>Assessment Workflow</h2><p>Go directly to the task you need to complete.</p></div><span className="ex-data-chip">Administrator workspace</span></div>
+            <div className="ex-quick-grid" style={{gridTemplateColumns:'repeat(2,minmax(0,1fr))'}}>
+              {[
+                ['years',CalendarDays,'Academic Setup','Manage academic years and active session.'],
+                ['curriculum',BookOpen,'Curriculum & Outcomes','Configure grades, subjects and learning outcomes.'],
+                ['exams',FileText,'Assessments','Create assessment plans and examination schedules.'],
+                ['marks',ClipboardCheck,'Record Progress','Enter marks, evidence and competency results.'],
+                ['reports',FileBadge,'Student Reports','Review progress and prepare bilingual reports.'],
+                ['settings',Settings2,'Rules & Permissions','Configure grading policy and examination roles.']
+              ].map(([id,Icon,title,description])=><button type="button" className="ex-quick-card" key={id} onClick={()=>setTab(id)} style={{minHeight:135,padding:15}}><span className="ex-quick-icon"><Icon size={19}/></span><strong>{title}</strong><small>{description}</small><span className="ex-quick-link">Open section →</span></button>)}
+            </div>
+          </section>
+
+          <div style={{display:'grid',gap:16,alignContent:'start'}}>
+            <section className="ex-panel">
+              <div className="ex-panel-head"><div><h2>Assessment Model by Grade</h2><p>Use the appropriate workflow for each grade band.</p></div></div>
+              <div className="ex-list">
+                <div className="ex-list-item"><div><strong>Grades 4–5 · Learning Progress</strong><small>Continuous formative assessment, learning outcomes, evidence and student portfolio. Avoid high-stakes terminal-exam workflow.</small></div><span className="ex-badge">Portfolio</span></div>
+                <div className="ex-list-item"><div><strong>Grades 6–8 · Basic Level</strong><small>Configure subject-wise internal and external assessment components according to the applicable curriculum and approved school rules.</small></div><span className="ex-badge">Configurable</span></div>
+                <div className="ex-list-item"><div><strong>Grades 9–10 · Secondary</strong><small>Configure formal assessment, subject marks, grading and reporting from the applicable official directive.</small></div><span className="ex-badge">Configurable</span></div>
+              </div>
+            </section>
+            <section className="ex-panel">
+              <div className="ex-panel-head"><div><h2>Official Rules Configuration</h2><p>Do not calculate grades or GPA until the applicable policy is entered and verified.</p></div></div>
+              <div className="ex-kpis" style={{gridTemplateColumns:'repeat(2,minmax(0,1fr))',marginBottom:8}}>
+                <div className="ex-kpi"><span>Grade Boundaries</span><strong style={{fontSize:18}}>{rules.filter(r=>r.is_verified).length}</strong><small>Verified rules</small></div>
+                <div className="ex-kpi"><span>GPA / Pass Policies</span><strong style={{fontSize:18}}>{policies.filter(p=>p.is_verified).length}</strong><small>Verified policies</small></div>
+              </div>
+              <p className="ex-muted">No grade bands, GPA maximum, pass marks or achievement levels are assumed by this dashboard. Configure them in Settings after checking the source document.</p>
+              <div className="ex-actions"><button type="button" className="ex-btn ex-btn-primary" onClick={()=>{setSettingsTab('grading');setTab('settings');}}>Configure Official Rules <Settings2 size={15}/></button></div>
+            </section>
+          </div>
         </div>
-        {panel(lang === 'ne' ? 'परीक्षा सञ्चालन सुरु गर्नुहोस्' : 'Start an Examination', lang === 'ne' ? 'काम गर्ने क्रमअनुसार एउटा चरण छान्नुहोस्।' : 'Choose the next step in the order you work.', <div className="ex-quick-grid">
-          {[
-            ['years', CalendarDays, lang === 'ne' ? '१. आधारभूत तयारी' : '1. Basic Setup', lang === 'ne' ? 'शैक्षिक सत्र सक्रिय गर्नुहोस् र विषय सूची जाँच्नुहोस्।' : 'Activate the academic year and check the subject list.'],
-            ['exams', FileText, lang === 'ne' ? '२. परीक्षा बनाउनुहोस्' : '2. Create Exam', lang === 'ne' ? 'कक्षा, परीक्षा नाम र मिति राखेर परीक्षा बनाउनुहोस्।' : 'Choose a grade, exam name and date.'],
-            ['marks', ClipboardCheck, lang === 'ne' ? '३. अङ्क भर्नुहोस्' : '3. Enter Marks', lang === 'ne' ? 'विषय छानेर विद्यार्थीको अङ्क भर्नुहोस्।' : 'Choose a subject and enter student marks.'],
-            ['reports', FileBadge, lang === 'ne' ? '४. नतिजा निकाल्नुहोस्' : '4. View Results', lang === 'ne' ? 'नतिजा जाँच्नुहोस् र मार्कसिट प्रिन्ट गर्नुहोस्।' : 'Review results and print marksheets.']
-          ].map(([id, Icon, title, description]) => <button type="button" className="ex-quick-card" key={id} onClick={() => setTab(id)}><span className="ex-quick-icon"><Icon size={19}/></span><strong>{title}</strong><small>{description}</small><span className="ex-quick-link">{lang === 'ne' ? 'यहाँ क्लिक गर्नुहोस् →' : 'Continue →'}</span></button>)}
-        </div>)}
-        {panel('Upcoming Examinations', 'The next scheduled examinations in your school.', <div className="ex-list">{(summary.upcomingExams||[]).map(e=><div className="ex-list-item" key={e.id}><div><strong>{e.exam_name_en}</strong><small>Grade {e.grade} · {e.exam_date_bs || toBS(e.exam_date) || 'Date not set'} · {statusLabel(e.status,lang)}</small></div>{actionBtn('Open Exam',()=>{setSelectedExamId(String(e.id));setTab('exams');},'secondary')}</div>)}{!(summary.upcomingExams||[]).length&&<p className="ex-empty">No upcoming examinations are scheduled.</p>}</div>)}
-        {panel(t('exams'), lang === 'ne' ? 'कक्षा ४–५ मा competency-first; ६–८ मा configurable subject-wise assessment; ९–१० मा formal marksheet template।' : 'Competency-first for 4–5; configurable subject assessment for 6–8; formal marksheet template for 9–10.', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('examInfo')}</th><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('model')}</th><th>{t('examStatus')}</th><th /></tr></thead><tbody>{displayExams.map(e => <tr key={e.id}><td><b>{lang === 'ne' ? e.exam_name_ne : e.exam_name_en}</b><small>{e.exam_date_bs || toBS(e.exam_date) || '—'}</small></td><td>{e.grade}</td><td>{e.year_name}</td><td>{gradeModelLabel(e.assessment_model,lang)}</td><td>{statusBadge(e.status)}</td><td>{actionBtn(t('chooseExam'), () => { setSelectedExamId(String(e.id)); setTab('exams'); })}</td></tr>)}{!displayExams.length && <tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
-        {panel(t('officialRules'), t('sourceWarning'), <div className="ex-list"><div><a className="ex-link" href="https://moecdc.gov.np/content/647/letter-grading-directory--2083/" target="_blank" rel="noreferrer">CDC — Letter Grading Directive, 2083</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/646/guide-to-student-assessment-in-basic-level/" target="_blank" rel="noreferrer">CDC — Student Assessment Guide for Grades 4–5, 2083</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/608/facilitation-manual-for-conducting-projects-and-experiments/" target="_blank" rel="noreferrer">CDC — Internal Assessment, Projects and Practical Work, 2082 (Grades 4–8)</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/21/internal-assessment-standards-for-student-legacy--2080/" target="_blank" rel="noreferrer">CDC — Internal Assessment Standards for Student Learning, 2080 (Grades 9–12)</a></div><div><a className="ex-link" href="https://www.cehrd.gov.np/content/13339/13339-student-assessment_trm_g4-5/" target="_blank" rel="noreferrer">CEHRD — Student Assessment Resource Material for Grades 4–5</a></div></div>)}
+
+        <div className="ex-two-col" style={{alignItems:'stretch'}}>
+          {panel('Upcoming Assessments', 'Scheduled assessments requiring attention.', <div className="ex-list">{(summary.upcomingExams||[]).map(e=><div className="ex-list-item" key={e.id}><div><strong>{e.exam_name_en}</strong><small>Grade {e.grade} · {e.exam_date_bs || toBS(e.exam_date) || 'Date not set'} · {statusLabel(e.status,lang)}</small></div>{actionBtn('Open',()=>{setSelectedExamId(String(e.id));setTab('exams');},'secondary')}</div>)}{!(summary.upcomingExams||[]).length&&<p className="ex-empty">No upcoming assessments scheduled.</p>}</div>)}
+          {panel('Official Reference Documents', 'Open the latest applicable guidance before configuring assessment rules.', <div className="ex-list">
+            <div><a className="ex-link" href="https://moecdc.gov.np/content/647/letter-grading-directory--2083/" target="_blank" rel="noreferrer">CDC — Letter Grading Directive, 2083</a></div>
+            <div><a className="ex-link" href="https://learning.cehrd.gov.np/pluginfile.php/106343/mod_resource/content/1/%E0%A4%86%E0%A4%A7%E0%A4%BE%E0%A4%B0%E0%A4%AD%E0%A5%82%E0%A4%A4%20%E0%A4%A4%E0%A4%B9%20%E0%A4%95%E0%A4%95%E0%A5%8D%E0%A4%B7%E0%A4%BE%20%E0%A5%AA-%E0%A5%AB%20%20%E0%A4%AE%E0%A4%BE%20%E0%A4%B5%E0%A4%BF%E0%A4%A6%E0%A5%8D%E0%A4%AF%E0%A4%BE%E0%A4%B0%E0%A5%8D%E0%A4%A5%E0%A5%80%20%E0%A4%AE%E0%A5%82%E0%A4%B2%E0%A5%8D%E0%A4%AF%E0%A4%BE%E0%A4%99%E0%A5%8D%E0%A4%95%E0%A4%A8%20%E0%A4%AE%E0%A4%BE%E0%A4%B0%E0%A5%8D%E0%A4%97%E0%A4%A6%E0%A4%B0%E0%A5%8D%E0%A4%B6%E0%A4%A8%20%E0%A5%A8%E0%A૦૮૩.pdf" target="_blank" rel="noreferrer">CDC — Student Assessment Guide, Grades 4–5, 2083 (PDF)</a></div>
+            <div><a className="ex-link" href="https://moecdc.gov.np/content/608/facilitation-manual-for-conducting-projects-and-experiments/" target="_blank" rel="noreferrer">CDC — Project and Practical Work Facilitation Manual, 2082 (Grades 4–8)</a></div>
+            <div><a className="ex-link" href="https://www.cehrd.gov.np/content/13339/13339-student-assessment_trm_g4-5/" target="_blank" rel="noreferrer">CEHRD — Student Assessment Resource Material, Grades 4–5</a></div>
+          </div>)}
+        </div>
       </>}
 
       {tab === 'years' && <div className="ex-two-col">
