@@ -522,6 +522,13 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
     return details?.marks?.find(m => String(m.component_id) === String(componentId) && String(m.student_id) === String(studentId));
   }
   function getSubjectComponents(subjectId) { return details?.components?.filter(c => String(c.exam_subject_id) === String(subjectId)) || []; }
+  function componentTotalFor(studentId, examSubject, componentTypes) {
+    const selected = getSubjectComponents(examSubject.id).filter(c => componentTypes.includes(String(c.component_type || '').toLowerCase()));
+    if (!selected.length) return null;
+    const records = selected.map(c => existingMark(c.id, studentId));
+    if (records.some(mark => !mark || (mark.marks_obtained == null && !mark.is_absent))) return null;
+    return records.reduce((sum, mark) => sum + (mark.is_absent ? 0 : Number(mark.marks_obtained || 0)), 0);
+  }
   function getStudentSubjectResult(studentId, examSubject) {
     const comps = getSubjectComponents(examSubject.id);
     const numeric = comps.filter(c => c.max_marks !== null && c.max_marks !== undefined);
@@ -659,13 +666,13 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
         </tbody></table>
       </> : <>
         <h3>{lang === 'ne' ? 'विषयगत नतिजा' : 'Subject-wise Results'}</h3>
-        <table className="exam-print-table"><thead><tr><th>{lang === 'ne' ? 'विषय' : 'Subject'}</th><th>{lang === 'ne' ? 'पूर्णाङ्क' : 'Full Marks'}</th><th>{lang === 'ne' ? 'प्राप्ताङ्क' : 'Obtained'}</th><th>%</th><th>{lang === 'ne' ? 'ग्रेड' : 'Grade'}</th><th>{lang === 'ne' ? 'स्थिति' : 'Status'}</th></tr></thead><tbody>
-          {totals.perSubject.map(({ subject, result }) => <tr key={subject.id}><td>{lang === 'ne' ? subject.subject_name_ne : subject.subject_name_en}</td><td>{result.full ?? '—'}</td><td>{result.total ?? '—'}</td><td>{result.pct == null ? '—' : result.pct.toFixed(2)}</td><td>{result.gradeRule?.letter_grade || '—'}</td><td>{result.passed == null ? t('notConfigured') : result.passed ? (lang === 'ne' ? 'उत्तीर्ण' : 'Pass') : (lang === 'ne' ? 'अनुत्तीर्ण' : 'Not pass')}</td></tr>)}
+        <table className="exam-print-table"><thead><tr><th>{lang === 'ne' ? 'विषय' : 'Subject'}</th><th>Credit Hour</th><th>Theory (TH)</th><th>Practical (PR)</th><th>{lang === 'ne' ? 'अन्तिम ग्रेड' : 'Final Grade'}</th><th>Grade Point</th></tr></thead><tbody>
+          {totals.perSubject.map(({ subject, result }) => { const theory = componentTotalFor(student.id, subject, ['written','internal','oral']); const practical = componentTotalFor(student.id, subject, ['practical']); return <tr key={subject.id}><td>{lang === 'ne' ? subject.subject_name_ne : subject.subject_name_en}</td><td>{subject.credit_hours ?? '—'}</td><td>{theory ?? '—'}</td><td>{practical ?? '—'}</td><td>{result.gradeRule?.letter_grade || '—'}</td><td>{result.gradeRule?.grade_point ?? '—'}</td></tr>; })}
         </tbody></table>
         <div className="exam-print-totals"><span>{t('total')}: {totals.total ?? '—'} / {totals.full ?? '—'}</span><span>{t('percent')}: {totals.pct == null ? '—' : `${totals.pct.toFixed(2)}%`}</span><span>GPA: {totals.gpa == null ? '—' : totals.gpa.toFixed(2)}</span><span>{t('overallStatus')}: {totals.overallPass == null ? t('notConfigured') : totals.overallPass ? 'Pass' : 'Not pass'}</span></div>
       </>}
       <div className="exam-print-attendance"><b>{lang === 'ne' ? 'अभिभावक' : 'Guardian'}:</b> {student.guardian_name || '—'} · {student.guardian_phone || '—'}　 <b>{lang === 'ne' ? 'उपस्थिति (उपस्थित/रेकर्ड दिन)' : 'Attendance (present/recorded days)'}:</b> {attendanceForStudent(student.id).present ?? '—'} / {attendanceForStudent(student.id).total ?? '—'}</div>
-      <div className="exam-signatures"><div>{lang === 'ne' ? 'कक्षा शिक्षकको हस्ताक्षर' : 'Class Teacher Signature'}</div><div>{lang === 'ne' ? 'प्रधानाध्यापकको हस्ताक्षर' : 'Principal Signature'}</div><div>{lang === 'ne' ? 'विद्यालयको छाप' : 'School Seal'}</div></div>
+      <div className="exam-report-box"><b>{lang === 'ne' ? 'शिक्षकको टिप्पणी' : 'Teacher’s Remarks'}</b><p>{(details.progressReports || []).find(r => String(r.student_id) === String(student.id))?.teacher_comments_en || '—'}</p></div><div className="exam-signatures"><div>{lang === 'ne' ? 'कक्षा शिक्षक' : 'Class Teacher'}</div><div>{lang === 'ne' ? 'परीक्षा प्रमुख' : 'Examination Head'}</div><div>{lang === 'ne' ? 'प्रधानाध्यापक' : 'Principal'}</div></div>
       <p className="exam-print-foot">{t('sourceWarning')}</p>
     </article>;
   };
