@@ -2475,6 +2475,41 @@ app.post('/api/exams/:examId/subjects', async (req, res) => {
   } catch (err) { if (err.code === '23505') return res.status(409).json({ message: 'यो subject exam मा पहिल्यै छ।' }); console.error('Exam subject setup error:', err.message); res.status(500).json({ message: 'Could not configure exam subject.' }); }
 });
 
+app.put('/api/exams/:examId/subjects/:examSubjectId', async (req, res) => {
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId), examSubjectId = Number(req.params.examSubjectId);
+    const { fullMarks = null, passMarks = null, creditHours = null } = req.body || {};
+    const exam = await pool.query(`SELECT e.status, ees.id, ees.full_marks FROM public.exam_exams e JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id WHERE e.id=$1 AND ees.id=$2 AND e.organization_id=$3`, [examId, examSubjectId, orgId]);
+    if (!exam.rowCount) return res.status(404).json({ message: 'Exam subject not found.' });
+    if (!['draft','in_review'].includes(exam.rows[0].status)) return res.status(409).json({ message: 'Approved/locked/published exam cannot be modified.' });
+    const full = fullMarks === null || fullMarks === '' ? null : Number(fullMarks), pass = passMarks === null || passMarks === '' ? null : Number(passMarks), credits = creditHours === null || creditHours === '' ? null : Number(creditHours);
+    if ((full !== null && (!validMoney(full) || full <= 0)) || (pass !== null && (!validMoney(pass) || pass < 0 || (full !== null && pass > full))) || (credits !== null && (!Number.isFinite(credits) || credits <= 0))) return res.status(400).json({ message: 'Full marks, pass marks or credit hours are invalid.' });
+    const componentTotal = await pool.query('SELECT COALESCE(SUM(max_marks),0) AS n FROM public.exam_assessment_components WHERE exam_subject_id=$1 AND organization_id=$2', [examSubjectId, orgId]);
+    if (full !== null && Number(componentTotal.rows[0].n) > full + 0.001) return res.status(400).json({ message: 'Subject full marks cannot be less than the total component maximum marks.' });
+    const updated = await pool.query(`UPDATE public.exam_exam_subjects SET full_marks=$1, pass_marks=$2, credit_hours=$3 WHERE id=$4 AND exam_id=$5 AND organization_id=$6 RETURNING *`, [full, pass, credits, examSubjectId, examId, orgId]);
+    return res.json(updated.rows[0]);
+  } catch (err) { console.error('Exam subject update error:', err.message); return res.status(500).json({ message: 'Could not update exam subject.' }); }
+});
+
+app.put('/api/exams/:examId/components/:componentId', async (req, res) => {
+  try {
+    const orgId = req.examActor.organizationId, examId = Number(req.params.examId), componentId = Number(req.params.componentId);
+    const { componentCode, nameEn, nameNe, componentType = 'other', maxMarks = null, passMarks = null } = req.body || {};
+    const types = ['written','internal','practical','project','continuous','presentation','portfolio','oral','other'];
+    const link = await pool.query(`SELECT e.status, c.exam_subject_id, ees.full_marks FROM public.exam_exams e JOIN public.exam_exam_subjects ees ON ees.exam_id=e.id AND ees.organization_id=e.organization_id JOIN public.exam_assessment_components c ON c.exam_subject_id=ees.id AND c.organization_id=e.organization_id WHERE e.id=$1 AND c.id=$2 AND e.organization_id=$3`, [examId, componentId, orgId]);
+    if (!link.rowCount) return res.status(404).json({ message: 'Assessment component not found.' });
+    if (!['draft','in_review'].includes(link.rows[0].status)) return res.status(409).json({ message: 'Approved/locked/published exam cannot be modified.' });
+    if (!String(componentCode || '').trim() || !String(nameEn || '').trim() || !String(nameNe || '').trim() || !types.includes(componentType)) return res.status(400).json({ message: 'Component code, bilingual name and valid component type are required.' });
+    const max = maxMarks === null || maxMarks === '' ? null : Number(maxMarks), pass = passMarks === null || passMarks === '' ? null : Number(passMarks);
+    if (max !== null && (!validMoney(max) || max <= 0)) return res.status(400).json({ message: 'Maximum marks must be positive or blank for descriptive assessment.' });
+    if (pass !== null && (!validMoney(pass) || pass < 0 || max === null || pass > max)) return res.status(400).json({ message: 'Component pass marks must be non-negative and not exceed maximum marks.' });
+    const totals = await pool.query('SELECT COALESCE(SUM(max_marks),0) AS n FROM public.exam_assessment_components WHERE exam_subject_id=$1 AND organization_id=$2 AND id<>$3', [link.rows[0].exam_subject_id, orgId, componentId]);
+    if (max !== null && link.rows[0].full_marks !== null && Number(totals.rows[0].n) + max > Number(link.rows[0].full_marks) + 0.001) return res.status(400).json({ message: 'Component maximum total exceeds configured subject full marks.' });
+    const updated = await pool.query(`UPDATE public.exam_assessment_components SET component_code=$1, name_en=$2, name_ne=$3, component_type=$4, max_marks=$5, pass_marks=$6 WHERE id=$7 AND organization_id=$8 RETURNING *`, [String(componentCode).trim(), String(nameEn).trim(), String(nameNe).trim(), componentType, max, pass, componentId, orgId]);
+    return res.json(updated.rows[0]);
+  } catch (err) { if (err.code === '23505') return res.status(409).json({ message: 'यो component code पहिले नै छ।' }); console.error('Exam component update error:', err.message); return res.status(500).json({ message: 'Could not update assessment component.' }); }
+});
+
 app.post('/api/exams/:examId/subjects/:examSubjectId/components', async (req, res) => {
   try {
     const orgId = req.examActor.organizationId, examId = Number(req.params.examId), examSubjectId = Number(req.params.examSubjectId);
