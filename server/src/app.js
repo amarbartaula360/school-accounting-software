@@ -1904,7 +1904,7 @@ async function examRoleGuard(req, res, next) {
       [Number(organizationId), email]
     );
     if (!roleResult.rowCount) {
-      return res.status(403).json({ message: 'Examination module access छैन। Admin ले तपाईंको email मा role assign गर्नुपर्छ।' });
+      return res.status(403).json({ message: 'You do not have Examination access. Ask an administrator to assign a role to your account.' });
     }
     const role = roleResult.rows[0].role;
     const path = req.path;
@@ -1918,7 +1918,7 @@ async function examRoleGuard(req, res, next) {
     else if (req.method === 'GET') allowed = ['admin', 'principal', 'exam_coordinator', 'teacher'];
     else allowed = ['admin', 'exam_coordinator'];
     if (!allowed.includes(role)) {
-      return res.status(403).json({ message: `यो कार्यका लागि अनुमति छैन। Assigned role: ${role}` });
+      return res.status(403).json({ message: `You are not authorized to perform this action. Assigned role: ${role}` });
     }
     req.examActor = { email, role, organizationId: Number(organizationId) };
     return next();
@@ -2592,6 +2592,31 @@ app.put('/api/exams/:examId/schedule', async (req, res) => {
     if (!['draft','in_review'].includes(exam.rows[0].status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Approved/locked/published schedule cannot be modified.' }); }
     const subject = await client.query('SELECT id FROM public.exam_exam_subjects WHERE id=$1 AND exam_id=$2 AND organization_id=$3', [subjectId, examId, orgId]);
     if (!subject.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Subject is not part of this exam.' }); }
+    if (startTime && endTime && (roomOrVenue.trim() || invigilator.trim())) {
+      const conflict = await client.query(
+        `SELECT sch.id, sch.room_or_venue, sch.invigilator, sch.start_time, sch.end_time,
+                e.exam_name_en, s.name_en AS subject_name
+         FROM public.exam_assessment_schedule sch
+         JOIN public.exam_exams e ON e.id=sch.exam_id
+         JOIN public.exam_exam_subjects ees ON ees.id=sch.exam_subject_id
+         JOIN public.exam_subjects s ON s.id=ees.subject_id
+         WHERE sch.organization_id=$1 AND sch.exam_id<>$2
+           AND sch.exam_date=$3::date
+           AND sch.start_time IS NOT NULL AND sch.end_time IS NOT NULL
+           AND sch.start_time < $5::time AND sch.end_time > $4::time
+           AND (
+             ($6<>'' AND LOWER(COALESCE(sch.room_or_venue,''))=LOWER($6))
+             OR ($7<>'' AND LOWER(COALESCE(sch.invigilator,''))=LOWER($7))
+           )
+         LIMIT 1`,
+        [orgId, examId, examDate || null, startTime, endTime, String(roomOrVenue).trim(), String(invigilator).trim()]
+      );
+      if (conflict.rowCount) {
+        await client.query('ROLLBACK');
+        const item = conflict.rows[0];
+        return res.status(409).json({ message: `Schedule conflict: ${item.subject_name} in ${item.exam_name_en} already uses the same room or invigilator during this time.` });
+      }
+    }
     const prior = await client.query('SELECT * FROM public.exam_assessment_schedule WHERE exam_id=$1 AND exam_subject_id=$2', [examId, subjectId]);
     const result = await client.query(
       `INSERT INTO public.exam_assessment_schedule (organization_id, exam_id, exam_subject_id, exam_date, exam_date_bs, start_time, end_time, room_or_venue, invigilator, updated_by_email, updated_at)
