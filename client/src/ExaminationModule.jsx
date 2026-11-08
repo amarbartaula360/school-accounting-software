@@ -91,7 +91,7 @@ function statusLabel(status, lang) {
 const words = {
   ne: {
     title: 'परीक्षा तथा प्रगति प्रतिवेदन', subtitle: 'कक्षा ४–१० · नेपाली/English · आधिकारिक नियम कन्फिगर गर्न मिल्ने',
-    dashboard: 'ड्यासबोर्ड', years: 'शैक्षिक सत्र', curriculum: 'विषय तथा सिकाइ उपलब्धि', exams: 'परीक्षा तथा सेटअप', marks: 'अङ्क प्रविष्टि', reports: 'मार्कसिट / प्रगति प्रतिवेदन', grading: 'ग्रेडिङ नियम', access: 'भूमिका / Audit',
+    dashboard: 'ड्यासबोर्ड', years: 'शैक्षिक सत्र', curriculum: 'विषय सूची', exams: 'परीक्षा', marks: 'अङ्क भर्नुहोस्', reports: 'मार्कसिट / रिपोर्ट', grading: 'ग्रेडिङ नियम', access: 'भूमिका / Audit',
     activeStudents: 'सक्रिय विद्यार्थी', academicYears: 'शैक्षिक सत्र', totalExams: 'परीक्षा संख्या', published: 'प्रकाशित नतिजा', verifiedRules: 'प्रमाणित ग्रेड नियम',
     officialRules: 'CDC / CEHRD का लागू हुने दस्तावेज जाँच्नुहोस्। ग्रेड, GPA, pass mark तथा कक्षा ४–५ का उपलब्धि स्तर यहाँ पूर्वनिर्धारित गरिएको छैन; लागू guideline बाट Admin ले कन्फिगर गर्नुपर्छ।',
     createYear: 'शैक्षिक सत्र थप्नुहोस्', yearName: 'सत्रको नाम', startDate: 'सुरु मिति (वि.सं.)', endDate: 'अन्तिम मिति (वि.सं.)', save: 'सेभ गर्नुहोस्', activate: 'सक्रिय बनाउनुहोस्', active: 'सक्रिय', inactive: 'निष्क्रिय',
@@ -112,7 +112,7 @@ const words = {
   },
   en: {
     title: 'Examination & Student Progress', subtitle: 'Grades 4–10 · Nepali/English · Configurable official rules',
-    dashboard: 'Dashboard', years: 'Academic Years', curriculum: 'Subjects & Competencies', exams: 'Exams & Setup', marks: 'Marks Entry', reports: 'Marksheet / Progress Report', grading: 'Grading Rules', access: 'Roles / Audit',
+    dashboard: 'Dashboard', years: 'Academic Year', curriculum: 'Subject List', exams: 'Exams', marks: 'Enter Marks', reports: 'Marksheet / Reports', grading: 'Grading Rules', access: 'Roles / Audit',
     activeStudents: 'Active Students', academicYears: 'Academic Years', totalExams: 'Examinations', published: 'Published Results', verifiedRules: 'Verified Grade Rules',
     officialRules: 'Check the applicable CDC / CEHRD documents. Grade bands, GPA, pass marks and Grades 4–5 achievement levels are not preset; an administrator must configure them from the applicable guideline.',
     createYear: 'Add Academic Year', yearName: 'Year Name', startDate: 'Start Date (B.S.)', endDate: 'End Date (B.S.)', save: 'Save', activate: 'Set Active', active: 'Active', inactive: 'Inactive',
@@ -633,61 +633,77 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
       .exam-top{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px}.exam-top h1{font-size:25px;margin:0 0 6px;font-weight:800;letter-spacing:-.02em}.exam-top p{margin:0;color:var(--muted);font-size:13px;line-height:1.7}.exam-lang{display:flex;padding:4px;gap:4px;border:1px solid var(--line);background:#fff;border-radius:12px}.exam-lang button{border:0;border-radius:8px;padding:9px 13px;background:transparent;color:#344054;font-weight:700;cursor:pointer}.exam-lang button.active{background:#eef2ff;color:#3730a3}
       .exam-tabs{display:flex;gap:7px;overflow-x:auto;padding:5px 0 13px;margin-bottom:14px}.exam-tab{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;border:1px solid var(--line);background:white;border-radius:10px;padding:10px 13px;font-size:12px;font-weight:700;color:#475467;cursor:pointer}.exam-tab.active{color:#fff;background:#3730a3;border-color:#3730a3}.exam-panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 2px 8px rgba(16,24,40,.03)}.ex-panel-head{display:flex;gap:16px;align-items:start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap}.ex-panel-head h2{font-size:16px;line-height:1.45;margin:0 0 4px;font-weight:800}.ex-panel-head p{color:var(--muted);font-size:12px;line-height:1.6;margin:0}.ex-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.ex-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.ex-field{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054;min-width:0}.ex-field small{font-size:11px;font-weight:400;color:#667085;line-height:1.5}.ex-input{width:100%;box-sizing:border-box;border:1px solid #d0d5dd;background:#fff;border-radius:9px;padding:10px 11px;font:inherit;font-weight:500;color:#101828;min-height:40px}.ex-input:focus{outline:2px solid #c7d2fe;border-color:#6366f1}.ex-input:disabled{background:#f2f4f7;color:#98a2b3}.ex-check{display:flex;gap:8px;align-items:center;font-size:12px;color:#344054;font-weight:600}.ex-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.ex-btn{border:1px solid transparent;border-radius:9px;padding:10px 13px;font:inherit;font-weight:700;font-size:12px;display:inline-flex;gap:7px;align-items:center;justify-content:center;cursor:pointer}.ex-btn:disabled{opacity:.48;cursor:not-allowed}.ex-btn-primary{background:#4338ca;color:white}.ex-btn-secondary{background:white;color:#344054;border-color:#d0d5dd}.ex-btn-danger{background:#fff1f2;color:#be123c;border-color:#fecdd3}.ex-btn-green{background:#ecfdf3;color:#027a48;border-color:#abefc6}.ex-alert{border-radius:10px;padding:12px 14px;font-size:12px;line-height:1.6;margin-bottom:12px}.ex-alert-error{background:#fff1f0;border:1px solid #fecdca;color:#b42318}.ex-alert-ok{background:#ecfdf3;border:1px solid #abefc6;color:#027a48}.ex-alert-info{background:#eff8ff;border:1px solid #b2ddff;color:#175cd3}.ex-muted{color:#667085;font-size:12px;line-height:1.7}.ex-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}.ex-kpi{background:white;border:1px solid var(--line);border-radius:14px;padding:15px;min-width:0}.ex-kpi span{font-size:11px;color:#667085;font-weight:700;display:block}.ex-kpi strong{font-size:25px;font-weight:800;display:block;margin-top:7px;overflow-wrap:anywhere}.ex-kpi small{font-size:10px;color:#98a2b3;display:block;margin-top:5px}.ex-table-wrap{width:100%;overflow:auto;border:1px solid var(--line);border-radius:10px}.ex-table{border-collapse:collapse;width:100%;min-width:700px;font-size:12px}.ex-table th{background:#f8fafc;color:#475467;text-align:left;font-weight:800;font-size:11px;white-space:nowrap}.ex-table th,.ex-table td{padding:10px 11px;border-bottom:1px solid #eaecf0;vertical-align:top}.ex-table tr:last-child td{border-bottom:0}.ex-table td small{display:block;color:#667085;margin-top:3px;line-height:1.5}.ex-empty{text-align:center;color:#667085;padding:22px!important}.ex-badge{display:inline-flex;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:800;white-space:nowrap;background:#f2f4f7;color:#344054}.ex-status-draft{background:#f2f4f7;color:#475467}.ex-status-in_review{background:#eff8ff;color:#175cd3}.ex-status-approved{background:#ecfdf3;color:#027a48}.ex-status-locked{background:#fffaeb;color:#b54708}.ex-status-published{background:#eef4ff;color:#3538cd}.ex-list{display:grid;gap:9px}.ex-list-item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:10px}.ex-list-item strong{font-size:12px;display:block}.ex-list-item small{color:#667085;font-size:11px;display:block;margin-top:4px;line-height:1.6}.ex-hint{font-size:11px;line-height:1.65;color:#667085;margin:10px 0 0}.ex-sticky{position:sticky;top:0;z-index:2;background:#fff;padding:10px 0}.ex-report-box{border:1px solid #d0d5dd;border-radius:8px;padding:10px 12px;margin:8px 0}.ex-report-box p{margin:5px 0 0;white-space:pre-wrap;line-height:1.55}.exam-print-root{display:none}.exam-print-page{font-family:'Noto Sans Devanagari','Noto Sans',Arial,sans-serif;color:#111;page-break-after:always;break-after:page;padding:5mm;min-height:245mm;box-sizing:border-box}.exam-print-page:last-child{page-break-after:auto;break-after:auto}.exam-print-head{display:flex;align-items:center;gap:15px;justify-content:center;text-align:center;border-bottom:2px solid #222;padding-bottom:10px;margin-bottom:12px}.exam-school-logo{border:2px solid #333;border-radius:50%;width:54px;height:54px;display:grid;place-items:center;font-size:18px;font-weight:800;flex-shrink:0;overflow:hidden}.exam-school-logo img{width:100%;height:100%;object-fit:contain;border-radius:50%}.exam-print-head h1{font-size:18px;margin:0 0 3px}.exam-print-head p{font-size:10px;margin:0 0 5px}.exam-print-head h2{font-size:14px;margin:4px 0 0}.exam-print-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;font-size:10.5px;margin-bottom:14px}.exam-print-table{width:100%;border-collapse:collapse;font-size:10px;margin:8px 0 13px}.exam-print-table thead{display:table-header-group}.exam-print-table th,.exam-print-table td{border:1px solid #444;padding:6px 7px;vertical-align:top;overflow-wrap:anywhere}.exam-print-table th{background:#f1f1f1!important;text-align:left}.exam-print-page h3{font-size:12px;margin:12px 0 6px}.exam-print-totals{display:flex;gap:16px;flex-wrap:wrap;justify-content:space-between;border:1px solid #444;padding:10px;font-size:11px;font-weight:700}.exam-print-attendance{border-top:1px solid #aaa;padding-top:8px;font-size:10px;margin-top:12px}.exam-signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:35px;text-align:center;font-size:10px}.exam-signatures div{border-top:1px solid #444;padding-top:7px}.exam-print-foot{margin-top:14px;font-size:8px;color:#555;line-height:1.4}.ex-footnote{font-size:10px;color:#667085;line-height:1.6;margin-top:12px}.ex-link{color:#3730a3;text-decoration:underline;overflow-wrap:anywhere}.ex-subtitle{font-size:12px;color:#667085;line-height:1.65;margin:0 0 12px}.ex-two-col{display:grid;grid-template-columns: minmax(260px,.8fr) minmax(0,1.2fr);gap:16px}.ex-data-chip{display:inline-flex;border-radius:7px;padding:4px 7px;background:#f2f4f7;color:#475467;font-size:10px;font-weight:700}.ex-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.ex-mark-input{max-width:95px;min-width:75px}.ex-tick{width:17px;height:17px}.ex-table tr:hover td{background:#fcfcfd}.ex-role-callout{background:#fffaeb;border:1px solid #fedf89;border-radius:10px;padding:11px;color:#93370d;font-size:11px;line-height:1.6;margin-bottom:12px}
       @media screen {
-        .exam-module{color:#eef3ff;--brand:#ff4fa3;--line:#292747;--muted:#94a5c2;background:transparent;color-scheme:dark;}
-        .exam-module .exam-top h1{color:#f6f8ff;}
-        .exam-module .exam-top p,.exam-module .ex-muted,.exam-module .ex-hint,.exam-module .ex-subtitle,.exam-module .ex-footnote{color:#94a5c2;}
-        .exam-module .exam-lang{background:#101827;border-color:#292747;}
-        .exam-module .exam-lang button{color:#b9c7df;}
-        .exam-module .exam-lang button.active{background:rgba(255,79,163,.14);color:#ff6ab3;border:1px solid rgba(255,79,163,.28);}
-        .exam-module .exam-tabs{scrollbar-color:#4e416e #0b1120;}
-        .exam-module .exam-tab{background:#101827;border-color:#292747;color:#b8c5dd;}
-        .exam-module .exam-tab.active{background:linear-gradient(135deg,#5a2d83,#302353);border-color:#9e54c5;color:#fff;box-shadow:0 6px 18px rgba(124,58,237,.15);}
-        .exam-module .exam-panel,.exam-module .ex-panel{background:linear-gradient(145deg,#111827 0%,#0b1120 100%);border-color:#292747;color:#edf3ff;box-shadow:0 12px 32px rgba(0,0,0,.16);}
-        .exam-module .ex-panel-head h2{color:#f2f6ff;}
-        .exam-module .ex-panel-head p{color:#91a2c0;}
-        .exam-module .ex-field{color:#c8d3e8;}
-        .exam-module .ex-field small{color:#8294b4;}
-        .exam-module .ex-input{background:#090f1d;color:#f4f7ff;border-color:#2c3152;}
-        .exam-module .ex-input:focus{outline:2px solid rgba(34,199,255,.2);border-color:#32bde7;}
-        .exam-module .ex-input:disabled{background:#131b2b;color:#7485a4;border-color:#252b43;}
-        .exam-module .ex-check{color:#c4d0e7;}
-        .exam-module .ex-btn-primary{background:linear-gradient(135deg,#146a91,#3b2b73);border-color:rgba(34,199,255,.28);color:#fff;}
-        .exam-module .ex-btn-secondary{background:#141b2b;color:#d5def0;border-color:#333655;}
-        .exam-module .ex-btn-danger{background:rgba(255,94,112,.11);color:#ff8592;border-color:rgba(255,94,112,.3);}
-        .exam-module .ex-btn-green{background:rgba(21,217,162,.12);color:#4ce8bc;border-color:rgba(21,217,162,.28);}
-        .exam-module .ex-alert-error{background:rgba(255,94,112,.10);border-color:rgba(255,94,112,.28);color:#ffc0c8;}
-        .exam-module .ex-alert-ok{background:rgba(21,217,162,.09);border-color:rgba(21,217,162,.25);color:#7cebd0;}
-        .exam-module .ex-alert-info{background:rgba(34,199,255,.08);border-color:rgba(34,199,255,.25);color:#9ce7ff;}
-        .exam-module .ex-kpi{background:linear-gradient(145deg,#141b2c,#0d1422);border-color:#292747;color:#f1f5ff;}
-        .exam-module .ex-kpi span{color:#9aabc8;}
-        .exam-module .ex-kpi strong{color:#f6f8ff;}
-        .exam-module .ex-kpi small{color:#7f91b0;}
-        .exam-module .ex-table-wrap{border-color:#292747;background:#0b1120;}
-        .exam-module .ex-table th{background:linear-gradient(110deg,#211b46,#141a2d);color:#ff68b1;}
-        .exam-module .ex-table th,.exam-module .ex-table td{border-color:#202940;}
-        .exam-module .ex-table td{color:#d0daed;}
-        .exam-module .ex-table td small{color:#8c9fbe;}
-        .exam-module .ex-table tr:hover td{background:#17172d;}
-        .exam-module .ex-empty{color:#91a2c0;}
-        .exam-module .ex-badge{background:#24243c;color:#cbd5ed;border:1px solid #373251;}
-        .exam-module .ex-status-draft{background:rgba(148,163,184,.12);color:#c5cfe2;}
-        .exam-module .ex-status-in_review{background:rgba(34,199,255,.12);color:#5bd5ff;}
-        .exam-module .ex-status-approved{background:rgba(21,217,162,.12);color:#50e2b8;}
-        .exam-module .ex-status-locked{background:rgba(255,176,32,.13);color:#ffca68;}
-        .exam-module .ex-status-published{background:rgba(255,79,163,.13);color:#ff79ba;}
-        .exam-module .ex-list-item{background:#0d1422;border-color:#292747;}
-        .exam-module .ex-list-item strong{color:#edf3ff;}
-        .exam-module .ex-list-item small{color:#91a2c0;}
-        .exam-module .ex-sticky{background:#0b1120;}
-        .exam-module .ex-report-box{border-color:#2c3151;background:#0d1422;color:#dbe5f6;}
-        .exam-module .ex-data-chip{background:rgba(34,199,255,.1);border:1px solid rgba(34,199,255,.2);color:#80dfff;}
-        .exam-module .ex-link{color:#ff71b8;}
-        .exam-module .ex-role-callout{background:rgba(255,176,32,.1);border-color:rgba(255,176,32,.28);color:#ffd17b;}
-        .exam-module input,.exam-module select,.exam-module textarea{color-scheme:dark;}
+        .exam-module{color:#182230;--brand:#3157c8;--line:#e4e9f2;--muted:#667085;background:#f6f8fc;color-scheme:light;}
+        .exam-module .exam-top h1{color:#172033;font-size:27px;letter-spacing:-.035em;}
+        .exam-module .exam-top p,.exam-module .ex-muted,.exam-module .ex-hint,.exam-module .ex-subtitle,.exam-module .ex-footnote{color:#667085;}
+        .exam-module .exam-lang{background:#fff;border-color:#e1e7f0;box-shadow:0 2px 8px rgba(16,24,40,.04);}
+        .exam-module .exam-lang button{color:#475467;}
+        .exam-module .exam-lang button.active{background:#eaf0ff;color:#294bb0;border:1px solid #d5e0ff;}
+        .exam-module .exam-tabs{scrollbar-color:#cbd5e1 #f1f5f9;gap:8px;padding:8px 0 15px;}
+        .exam-module .exam-tab{background:#fff;border-color:#e1e7f0;color:#475467;border-radius:11px;padding:11px 15px;box-shadow:0 1px 3px rgba(16,24,40,.035);transition:all .18s ease;}
+        .exam-module .exam-tab:hover{border-color:#9aafea;background:#f8faff;}
+        .exam-module .exam-tab.active{background:#3157c8;border-color:#3157c8;color:#fff;box-shadow:0 5px 14px rgba(49,87,200,.18);}
+        .exam-module .exam-panel,.exam-module .ex-panel{background:#fff;border:1px solid #e5eaf2;border-radius:16px;color:#182230;box-shadow:0 4px 18px rgba(16,24,40,.045);}
+        .exam-module .ex-panel-head h2{color:#182230;font-size:17px;}
+        .exam-module .ex-panel-head p{color:#667085;}
+        .exam-module .ex-field{color:#344054;font-size:12px;}
+        .exam-module .ex-field small{color:#667085;}
+        .exam-module .ex-input{background:#fff;color:#182230;border:1px solid #d5dce8;border-radius:10px;min-height:42px;}
+        .exam-module .ex-input:focus{outline:3px solid rgba(49,87,200,.12);border-color:#6382dc;}
+        .exam-module .ex-input:disabled{background:#f2f4f7;color:#98a2b3;border-color:#e4e7ec;}
+        .exam-module .ex-check{color:#344054;}
+        .exam-module .ex-btn{border-radius:10px;min-height:39px;transition:all .15s ease;}
+        .exam-module .ex-btn-primary{background:#3157c8;border-color:#3157c8;color:#fff;box-shadow:0 2px 5px rgba(49,87,200,.14);}
+        .exam-module .ex-btn-primary:hover{background:#2548ad;}
+        .exam-module .ex-btn-secondary{background:#fff;color:#344054;border-color:#d5dce8;}
+        .exam-module .ex-btn-danger{background:#fff1f2;color:#be123c;border-color:#fecdd3;}
+        .exam-module .ex-btn-green{background:#ecfdf3;color:#027a48;border-color:#abefc6;}
+        .exam-module .ex-alert-error{background:#fff1f0;border-color:#fecdca;color:#b42318;}
+        .exam-module .ex-alert-ok{background:#ecfdf3;border-color:#abefc6;color:#027a48;}
+        .exam-module .ex-alert-info{background:#eff8ff;border-color:#b2ddff;color:#175cd3;}
+        .exam-module .ex-kpi{background:#fff;border-color:#e5eaf2;color:#182230;box-shadow:0 3px 12px rgba(16,24,40,.035);}
+        .exam-module .ex-kpi span{color:#667085;}
+        .exam-module .ex-kpi strong{color:#182230;font-size:27px;}
+        .exam-module .ex-kpi small{color:#98a2b3;}
+        .exam-module .ex-table-wrap{border-color:#e5eaf2;background:#fff;border-radius:11px;}
+        .exam-module .ex-table th{background:#f5f7fb;color:#475467;}
+        .exam-module .ex-table th,.exam-module .ex-table td{border-color:#eaecf0;}
+        .exam-module .ex-table td{color:#344054;}
+        .exam-module .ex-table td small{color:#667085;}
+        .exam-module .ex-table tr:hover td{background:#f8faff;}
+        .exam-module .ex-empty{color:#667085;}
+        .exam-module .ex-badge{background:#f2f4f7;color:#344054;border:1px solid #eaecf0;}
+        .exam-module .ex-status-draft{background:#f2f4f7;color:#475467;}
+        .exam-module .ex-status-in_review{background:#eff8ff;color:#175cd3;}
+        .exam-module .ex-status-approved{background:#ecfdf3;color:#027a48;}
+        .exam-module .ex-status-locked{background:#fffaeb;color:#b54708;}
+        .exam-module .ex-status-published{background:#eef4ff;color:#3538cd;}
+        .exam-module .ex-list-item{background:#fff;border-color:#e5eaf2;}
+        .exam-module .ex-list-item strong{color:#182230;}
+        .exam-module .ex-list-item small{color:#667085;}
+        .exam-module .ex-sticky{background:#fff;}
+        .exam-module .ex-report-box{border-color:#e5eaf2;background:#f8fafc;color:#344054;}
+        .exam-module .ex-data-chip{background:#eff6ff;border:1px solid #dbeafe;color:#1d4ed8;}
+        .exam-module .ex-link{color:#3157c8;}
+        .exam-module .ex-role-callout{background:#fffaeb;border-color:#fedf89;color:#93370d;}
+        .exam-module input,.exam-module select,.exam-module textarea{color-scheme:light;}
+        .exam-module button:focus-visible,.exam-module input:focus-visible,.exam-module select:focus-visible,.exam-module textarea:focus-visible{outline:3px solid rgba(49,87,200,.22);outline-offset:2px;}
       }
-      .exam-subtabs{padding-top:0;margin-top:-7px;margin-bottom:16px}.ex-quick-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.ex-quick-card{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;text-align:left;padding:14px;border:1px solid var(--line);border-radius:12px;background:#fff;color:#172033;cursor:pointer;transition:border-color .15s,transform .15s}.ex-quick-card:hover{border-color:#818cf8;transform:translateY(-2px)}.ex-quick-card strong{font-size:12px;line-height:1.5}.ex-quick-card small{font-size:11px;line-height:1.55;color:#667085}.ex-quick-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#eef2ff;color:#4338ca}.ex-quick-link{font-size:11px;font-weight:800;color:#6366f1;margin-top:auto}.exam-module .ex-quick-card{background:linear-gradient(145deg,#141b2c,#0d1422);border-color:#292747;color:#f1f5ff}.exam-module .ex-quick-card small{color:#9aabc8}.exam-module .ex-quick-icon{background:rgba(255,79,163,.13);color:#ff79ba}.exam-module .ex-quick-link{color:#ff79ba}
-      @media(max-width:1100px){.ex-quick-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.ex-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.ex-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
-      @media(max-width:700px){.ex-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.exam-top h1{font-size:21px}.ex-panel,.exam-panel{padding:14px}.ex-grid,.ex-grid-3,.ex-two-col{grid-template-columns:1fr}.ex-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-kpi strong{font-size:21px}.exam-print-meta{grid-template-columns:1fr}}
+      .exam-subtabs{padding-top:0;margin-top:-7px;margin-bottom:16px}
+      .ex-quick-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+      .ex-quick-card{display:flex;flex-direction:column;align-items:flex-start;gap:10px;min-width:0;min-height:172px;text-align:left;padding:18px;border:1px solid #e5eaf2;border-radius:15px;background:#fff;color:#182230;cursor:pointer;box-shadow:0 3px 12px rgba(16,24,40,.035);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+      .ex-quick-card:hover{border-color:#9aafea;transform:translateY(-3px);box-shadow:0 9px 22px rgba(49,87,200,.10)}
+      .ex-quick-card:focus-visible{outline:3px solid rgba(49,87,200,.22);outline-offset:3px}
+      .ex-quick-card strong{font-size:14px;line-height:1.5}
+      .ex-quick-card small{font-size:12px;line-height:1.65;color:#667085}
+      .ex-quick-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:#edf2ff;color:#3157c8}
+      .ex-quick-link{font-size:11px;font-weight:800;color:#3157c8;margin-top:auto}
+      .exam-module .ex-quick-card{background:#fff;border-color:#e5eaf2;color:#182230}
+      .exam-module .ex-quick-card small{color:#667085}
+      .exam-module .ex-quick-icon{background:#edf2ff;color:#3157c8}
+      .exam-module .ex-quick-link{color:#3157c8}
+      @media(max-width:1100px){.ex-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.ex-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:700px){.ex-quick-grid{grid-template-columns:1fr}.exam-top h1{font-size:21px}.ex-panel,.exam-panel{padding:14px}.ex-grid,.ex-grid-3,.ex-two-col{grid-template-columns:1fr}.ex-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-kpi strong{font-size:21px}.exam-print-meta{grid-template-columns:1fr}}
       @page{size:A4 portrait;margin:10mm}
       @media print{body *{visibility:hidden!important}.exam-print-root,.exam-print-root *{visibility:visible!important}.exam-print-root{display:block!important;position:absolute;left:0;top:0;width:100%;background:#fff;color:#111}.exam-print-page{min-height:0;padding:0;margin:0;font-size:10pt;break-after:page;page-break-after:always}.exam-print-page:last-child{break-after:auto;page-break-after:auto}.exam-print-table tr{break-inside:avoid;page-break-inside:avoid}.exam-print-page h1,.exam-print-page h2,.exam-print-page h3,.exam-print-page p,.exam-print-page td,.exam-print-page th{color:#111!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
     `}</style>
@@ -714,14 +730,13 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
           <div className="ex-kpi"><span>{t('published')}</span><strong>{summary.exams?.published || 0}</strong><small>{lang === 'ne' ? 'प्रकाशित नतिजा मात्र' : 'Published only'}</small></div>
           <div className="ex-kpi"><span>{t('verifiedRules')}</span><strong>{summary.verifiedGradingRules ?? 0}</strong><small>{lang === 'ne' ? 'नियम/दफा प्रमाणित' : 'Verified grading bands'}</small></div>
         </div>
-        {panel(lang === 'ne' ? 'छिटो सुरु गर्नुहोस्' : 'Quick Start', lang === 'ne' ? 'तलका चरणहरू क्रमशः पूरा गर्दा परीक्षा सञ्चालन गर्न सजिलो हुन्छ।' : 'Follow these steps in order to run an examination.', <div className="ex-quick-grid">
+        {panel(lang === 'ne' ? 'परीक्षा सञ्चालन सुरु गर्नुहोस्' : 'Start an Examination', lang === 'ne' ? 'काम गर्ने क्रमअनुसार एउटा चरण छान्नुहोस्।' : 'Choose the next step in the order you work.', <div className="ex-quick-grid">
           {[
-            ['years', CalendarDays, lang === 'ne' ? '१. शैक्षिक सत्र' : '1. Academic Year', lang === 'ne' ? 'पहिले चालु शैक्षिक सत्र छान्नुहोस् वा थप्नुहोस्।' : 'Select or add the active academic year.'],
-            ['curriculum', BookOpen, lang === 'ne' ? '२. विषय सूची' : '2. Subjects', lang === 'ne' ? 'कक्षा अनुसार विषय र सिकाइ उपलब्धि मिलाउनुहोस्।' : 'Set up subjects and learning outcomes by grade.'],
-            ['exams', FileText, lang === 'ne' ? '३. परीक्षा सेटअप' : '3. Create Exam', lang === 'ne' ? 'परीक्षा बनाएर विषय र पूर्णाङ्क राख्नुहोस्।' : 'Create an exam and add subjects and marks.'],
-            ['marks', ClipboardCheck, lang === 'ne' ? '४. अङ्क प्रविष्टि' : '4. Enter Marks', lang === 'ne' ? 'विद्यार्थीको प्राप्ताङ्क भरेर सेभ गर्नुहोस्।' : 'Enter and save student marks.'],
-            ['reports', FileBadge, lang === 'ne' ? '५. मार्कसिट' : '5. Marksheet', lang === 'ne' ? 'नतिजा जाँचेर मार्कसिट प्रिन्ट गर्नुहोस्।' : 'Review results and print marksheets.']
-          ].map(([id, Icon, title, description]) => <button type="button" className="ex-quick-card" key={id} onClick={() => setTab(id)}><span className="ex-quick-icon"><Icon size={18}/></span><strong>{title}</strong><small>{description}</small><span className="ex-quick-link">{lang === 'ne' ? 'खोल्नुहोस् →' : 'Open →'}</span></button>)}
+            ['years', CalendarDays, lang === 'ne' ? '१. आधारभूत तयारी' : '1. Basic Setup', lang === 'ne' ? 'शैक्षिक सत्र सक्रिय गर्नुहोस् र विषय सूची जाँच्नुहोस्।' : 'Activate the academic year and check the subject list.'],
+            ['exams', FileText, lang === 'ne' ? '२. परीक्षा बनाउनुहोस्' : '2. Create Exam', lang === 'ne' ? 'कक्षा, परीक्षा नाम र मिति राखेर परीक्षा बनाउनुहोस्।' : 'Choose a grade, exam name and date.'],
+            ['marks', ClipboardCheck, lang === 'ne' ? '३. अङ्क भर्नुहोस्' : '3. Enter Marks', lang === 'ne' ? 'विषय छानेर विद्यार्थीको अङ्क भर्नुहोस्।' : 'Choose a subject and enter student marks.'],
+            ['reports', FileBadge, lang === 'ne' ? '४. नतिजा निकाल्नुहोस्' : '4. View Results', lang === 'ne' ? 'नतिजा जाँच्नुहोस् र मार्कसिट प्रिन्ट गर्नुहोस्।' : 'Review results and print marksheets.']
+          ].map(([id, Icon, title, description]) => <button type="button" className="ex-quick-card" key={id} onClick={() => setTab(id)}><span className="ex-quick-icon"><Icon size={19}/></span><strong>{title}</strong><small>{description}</small><span className="ex-quick-link">{lang === 'ne' ? 'यहाँ क्लिक गर्नुहोस् →' : 'Continue →'}</span></button>)}
         </div>)}
         {panel(t('exams'), lang === 'ne' ? 'कक्षा ४–५ मा competency-first; ६–८ मा configurable subject-wise assessment; ९–१० मा formal marksheet template।' : 'Competency-first for 4–5; configurable subject assessment for 6–8; formal marksheet template for 9–10.', <div className="ex-table-wrap"><table className="ex-table"><thead><tr><th>{t('examInfo')}</th><th>{t('grade')}</th><th>{t('academicYears')}</th><th>{t('model')}</th><th>{t('examStatus')}</th><th /></tr></thead><tbody>{displayExams.map(e => <tr key={e.id}><td><b>{lang === 'ne' ? e.exam_name_ne : e.exam_name_en}</b><small>{e.exam_date_bs || toBS(e.exam_date) || '—'}</small></td><td>{e.grade}</td><td>{e.year_name}</td><td>{gradeModelLabel(e.assessment_model,lang)}</td><td>{statusBadge(e.status)}</td><td>{actionBtn(t('chooseExam'), () => { setSelectedExamId(String(e.id)); setTab('exams'); })}</td></tr>)}{!displayExams.length && <tr><td colSpan="6" className="ex-empty">{t('noRecords')}</td></tr>}</tbody></table></div>)}
         {panel(t('officialRules'), t('sourceWarning'), <div className="ex-list"><div><a className="ex-link" href="https://moecdc.gov.np/content/647/letter-grading-directory--2083/" target="_blank" rel="noreferrer">CDC — लेटर ग्रेडिङ निर्देशिका, २०८३</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/646/guide-to-student-assessment-in-basic-level/" target="_blank" rel="noreferrer">CDC — कक्षा ४–५ विद्यार्थी मूल्याङ्कन मार्गदर्शन, २०८३</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/608/facilitation-manual-for-conducting-projects-and-experiments/" target="_blank" rel="noreferrer">CDC — आन्तरिक मूल्याङ्कन, परियोजना तथा प्रयोगात्मक कार्य, २०८२ (कक्षा ४–८)</a></div><div><a className="ex-link" href="https://moecdc.gov.np/content/21/internal-assessment-standards-for-student-legacy--2080/" target="_blank" rel="noreferrer">CDC — विद्यार्थी सिकाइका लागि आन्तरिक मूल्याङ्कन मापदण्ड, २०८० (कक्षा ९–१२)</a></div><div><a className="ex-link" href="https://www.cehrd.gov.np/content/13339/13339-student-assessment_trm_g4-5/" target="_blank" rel="noreferrer">CEHRD — कक्षा ४–५ विद्यार्थी मूल्याङ्कन स्रोत सामग्री</a></div></div>)}
