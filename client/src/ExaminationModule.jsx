@@ -364,7 +364,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
       const updated = await api(`/api/exams/${editingExamId}`, { method: 'PUT', body: { academicYearId: examForm.academicYearId, examNameEn: examForm.examNameEn, examType: examForm.examType, examDate, examDateBs: examForm.examDateBs } });
       setSelectedExamId(String(updated.id));
       setEditingExamId('');
-      setExamForm({ academicYearId: '', grade: 4, examNameEn: '', examNameNe: '', examType: 'terminal', examDateBs: todayBS() });
+      setExamForm({ academicYearId: '', grade: 4, examNameEn: '', examType: 'terminal', examDateBs: todayBS() });
     } else {
       const model = gradeModel(examForm.grade);
       const created = await api('/api/exams', { method: 'POST', body: { ...examForm, grade: Number(examForm.grade), className: `Grade ${Number(examForm.grade)}`, section: '', examDate, examDateBs: examForm.examDateBs, assessmentModel: model } });
@@ -721,10 +721,10 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const navItems = [
     ['dashboard', t('dashboard'), <Activity size={16} />],
     ['years', t('years'), <CalendarDays size={16} />],
-    ['curriculum', t('curriculum'), <BookOpen size={16} />],
     ['exams', t('exams'), <FileText size={16} />],
     ['marks', t('marks'), <ClipboardCheck size={16} />],
     ['reports', t('reports'), <FileBadge size={16} />],
+    ['curriculum', t('curriculum'), <BookOpen size={16} />],
     ['settings', lang === 'ne' ? 'सेटिङ' : 'Settings', <Settings2 size={16} />]
   ];
 
@@ -895,7 +895,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
 
         <div className="ex-two-col" style={{alignItems:'stretch',marginBottom:16}}>
           <section className="ex-panel">
-            <div className="ex-panel-head"><div><h2>Assessment Workflow</h2><p>Go directly to the task you need to complete.</p></div><span className="ex-data-chip">Administrator workspace</span></div>
+            <div className="ex-panel-head"><div><h2>Assessment Workflow</h2><p>EMIS-style sequence: academic year → exam setup → subject schedule → marks entry → result approval → marksheet.</p></div><span className="ex-data-chip">Administrator workspace</span></div>
             <div className="ex-quick-grid" style={{gridTemplateColumns:'repeat(2,minmax(0,1fr))'}}>
               {[
                 ['years',CalendarDays,'Academic Setup','Manage academic years and active session.'],
@@ -1081,7 +1081,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
 
       {tab === 'reports' && <>
         {panel(t('reports'), t('printHint'), <div className="ex-grid-3">
-          {field(t('chooseExam'),select(selectedExamId,v=>setSelectedExamId(v),displayExams.map(e=>({value:e.id,label:`${e.year_name} · Grade ${e.grade} · ${lang==='ne'?e.exam_name_ne:e.exam_name_en}`}))))}
+          {field(t('chooseExam'),select(selectedExamId,v=>setSelectedExamId(v),displayExams.map(e=>({value:e.id,label:`${e.year_name} · Grade ${e.grade} · ${e.exam_name_en}`}))))}
           {field(t('selectStudent'),select(selectedPrintStudentId,v=>setSelectedPrintStudentId(v),(details?.students||[]).map(s=>({value:s.id,label:studentLabel(s)}))))}
           <div className="ex-muted" style={{alignSelf:'end'}}>{details?.students?.length||0} students · {details?.exam?statusLabel(details.exam.status,lang):'—'}</div>
         </div>)}
