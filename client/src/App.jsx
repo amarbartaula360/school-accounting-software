@@ -12,7 +12,7 @@ import {
   Package, Users, Landmark, ChartNoAxesCombined, Settings, Search,
   Bell, ArrowUpRight, ArrowDownRight, Wallet, CreditCard, TrendingUp,
   Menu, ChevronDown, Plus, Trash2, RefreshCw, Printer, FileText,
-  LogIn, LogOut, CalendarDays, AlertCircle, CheckCircle2
+  LogIn, LogOut, CalendarDays, AlertCircle, CheckCircle2, Eye, EyeOff
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.DEV
@@ -155,6 +155,7 @@ function normalizeAccount(account) {
 function LoginSystem({ onLogin, examOnlyMode = false }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -217,14 +218,25 @@ function LoginSystem({ onLogin, examOnlyMode = false }) {
 
                <label style={styles.label}>
           पासवर्ड / Password
-          <input
-            style={styles.input}
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={event => setPassword(event.target.value)}
-            required
-          />
+          <div style={{ position: 'relative' }}>
+            <input
+              style={{ ...styles.input, paddingRight: 48 }}
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
+              value={password}
+              onChange={event => setPassword(event.target.value)}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(value => !value)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-pressed={showPassword}
+              style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', border: 0, background: 'transparent', color: '#64748b', cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 6 }}
+            >
+              {showPassword ? <EyeOff size={19} /> : <Eye size={19} />}
+            </button>
+          </div>
         </label>
 
         {error && <p style={styles.error}>{error}</p>}
