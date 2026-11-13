@@ -335,7 +335,7 @@ export default function ExaminationModule({ apiBaseUrl, organizationId = 1, user
   const selectedComponent = components.find(c => String(c.id) === String(selectedComponentId)) || components[0] || null;
   const selectedStudent = details?.students?.find(s => String(s.id) === String(selectedStudentId)) || null;
   const selectedPrintStudent = details?.students?.find(s => String(s.id) === String(selectedPrintStudentId)) || null;
-  const gradeSubjects = subjects.filter(s => Number(s.grade) === Number(examForm.grade));
+  const gradeSubjects = subjects.filter(s => Number(s.grade) === Number(selectedExam?.grade ?? examForm.grade));
   const competencySubjects = subjects.filter(s => Number(s.grade) === Number(competencyForm.grade));
   // Examinations are grade-wide: class names and sections are student-level details, not exam setup fields.
   const canEdit = ['admin', 'exam_coordinator', 'teacher'].includes(roles.find(r => r.user_email?.toLowerCase() === user?.email?.toLowerCase() && r.is_active)?.role);
